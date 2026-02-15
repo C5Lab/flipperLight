@@ -5,6 +5,7 @@
  * - Evil Twin Passwords
  * - Portal Data
  * - Handshakes
+ * - Send to wpa-sec
  */
 
 #include "app.h"
@@ -55,13 +56,20 @@ static void comp_data_menu_draw(Canvas* canvas, void* model) {
     const char* items[] = {
         "Evil Twin Passwords",
         "Portal Data",
-        "Handshakes"
+        "Handshakes...",
+        "Send to wpa-sec"
     };
-    const uint8_t item_count = 3;
+    const uint8_t item_count = 4;
     
     canvas_set_font(canvas, FontSecondary);
     for(uint8_t i = 0; i < item_count; i++) {
+        // Add separator line and extra spacing before "Send to wpa-sec"
         uint8_t y = 22 + (i * 10);
+        if(i == 3) {
+            uint8_t line_y = 22 + (2 * 10) + 4; // below Handshakes
+            canvas_draw_line(canvas, 0, line_y, 128, line_y);
+            y += 4; // shift down after separator
+        }
         if(i == m->selected) {
             canvas_draw_box(canvas, 0, y - 8, 128, 10);
             canvas_set_color(canvas, ColorWhite);
@@ -96,7 +104,7 @@ static bool comp_data_menu_input(InputEvent* event, void* context) {
     if(event->key == InputKeyUp) {
         if(m->selected > 0) m->selected--;
     } else if(event->key == InputKeyDown) {
-        if(m->selected < 2) m->selected++;
+        if(m->selected < 3) m->selected++;
     } else if(event->key == InputKeyOk) {
         uint8_t sel = m->selected;
         view_commit_model(view, false);
@@ -117,6 +125,10 @@ static bool comp_data_menu_input(InputEvent* event, void* context) {
             FURI_LOG_I(TAG, "Creating Handshakes screen");
             next = screen_handshakes_create(app, &data);
             cleanup = handshakes_cleanup_internal;
+        } else if(sel == 3) {
+            FURI_LOG_I(TAG, "Creating WPA-SEC upload screen");
+            next = screen_wpasec_create(app, &data);
+            cleanup = wpasec_cleanup_internal;
         }
         
         if(next && cleanup) {

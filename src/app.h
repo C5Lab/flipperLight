@@ -89,6 +89,9 @@ struct WiFiApp {
     // Board SD card status
     bool sd_card_ok;
     bool sd_card_checked;
+    
+    // WiFi connection status (set by wifi_connect success in ARP/wpasec screens)
+    bool wifi_connected;
 };
 
 // App entry point

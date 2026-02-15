@@ -424,6 +424,7 @@ static int32_t arp_poisoning_thread(void* context) {
 
             if(strstr(line, "SUCCESS")) {
                 connected = true;
+                app->wifi_connected = true;
                 break;
             }
             if(strstr(line, "FAIL") || strstr(line, "Error") || strstr(line, "error")) {

@@ -18,3 +18,7 @@ void portal_data_cleanup_internal(View* view, void* data);
 // Handshakes sub-screen
 View* screen_handshakes_create(WiFiApp* app, void** out_data);
 void handshakes_cleanup_internal(View* view, void* data);
+
+// WPA-SEC upload sub-screen
+View* screen_wpasec_create(WiFiApp* app, void** out_data);
+void wpasec_cleanup_internal(View* view, void* data);
