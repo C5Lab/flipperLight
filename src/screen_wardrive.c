@@ -1,8 +1,8 @@
 /**
  * Wardrive Screen
  * 
- * GPS-based network logging.
- * Command: start_wardrive
+ * GPS-based promiscuous network logging.
+ * Command: start_wardrive_promisc
  */
 
 #include "app.h"
@@ -20,8 +20,12 @@ typedef struct {
     WiFiApp* app;
     volatile bool attack_finished;
     bool gps_fix;
-    char last_log_line[64];
+    bool gps_lost;
+    bool wardrive_active;
+    char last_ssid[33];
+    char last_coords[32];
     uint32_t network_count;
+    uint32_t wait_seconds;
     FuriThread* thread;
 } WardriveData;
 
@@ -61,18 +65,36 @@ static void wardrive_draw(Canvas* canvas, void* model) {
     
     canvas_set_font(canvas, FontSecondary);
     
-    if(!data->gps_fix) {
-        screen_draw_centered_text(canvas, "Acquiring GPS Fix", 32);
-        screen_draw_centered_text(canvas, "Need clear sky view", 44);
+    if(data->gps_lost) {
+        screen_draw_centered_text(canvas, "GPS fix lost!", 24);
+        char line[48];
+        snprintf(line, sizeof(line), "Paused. Networks: %lu", (unsigned long)data->network_count);
+        screen_draw_centered_text(canvas, line, 36);
+        screen_draw_centered_text(canvas, "Waiting for signal...", 48);
+        screen_draw_centered_text(canvas, "BACK = stop", 60);
+    } else if(!data->gps_fix) {
+        screen_draw_centered_text(canvas, "Waiting for GPS fix...", 24);
+        if(data->wait_seconds > 0) {
+            char line[32];
+            snprintf(line, sizeof(line), "Elapsed: %lus", (unsigned long)data->wait_seconds);
+            screen_draw_centered_text(canvas, line, 36);
+        }
+        screen_draw_centered_text(canvas, "Need clear sky view", 48);
+        screen_draw_centered_text(canvas, "BACK = cancel", 60);
     } else {
         char line[48];
-        snprintf(line, sizeof(line), "Networks: %lu", data->network_count);
-        screen_draw_centered_text(canvas, line, 28);
+        snprintf(line, sizeof(line), "Networks: %lu", (unsigned long)data->network_count);
+        screen_draw_centered_text(canvas, line, 24);
         
-        // Show last log line (truncated)
-        if(data->last_log_line[0]) {
-            canvas_draw_str(canvas, 2, 44, data->last_log_line);
+        if(data->last_ssid[0]) {
+            canvas_draw_str(canvas, 2, 38, data->last_ssid);
         }
+        
+        if(data->last_coords[0]) {
+            canvas_draw_str(canvas, 2, 50, data->last_coords);
+        }
+        
+        screen_draw_centered_text(canvas, "BACK = stop", 62);
     }
 }
 
@@ -112,35 +134,129 @@ static bool wardrive_input(InputEvent* event, void* context) {
 // Attack Thread
 // ============================================================================
 
+static void wardrive_parse_csv_coords(const char* line, char* out, size_t out_size) {
+    const char* p = line;
+    int field = 0;
+    const char* lat_start = NULL;
+    const char* lat_end = NULL;
+    const char* lon_start = NULL;
+    const char* lon_end = NULL;
+    while(*p) {
+        if(field == 6 && !lat_start) { lat_start = p; }
+        if(field == 7 && !lon_start) { lon_start = p; }
+        if(*p == ',') {
+            if(field == 6) { lat_end = p; }
+            if(field == 7) { lon_end = p; break; }
+            field++;
+        }
+        p++;
+    }
+    if(lat_start && lat_end && lon_start && lon_end) {
+        int lat_len = (int)(lat_end - lat_start);
+        int lon_len = (int)(lon_end - lon_start);
+        snprintf(out, out_size, "%.*s, %.*s", lat_len, lat_start, lon_len, lon_start);
+    }
+}
+
+static void wardrive_parse_fix_coords(const char* line, char* out, size_t out_size) {
+    const char* lat_p = strstr(line, "Lat=");
+    const char* lon_p = strstr(line, "Lon=");
+    if(!lat_p || !lon_p) return;
+    lat_p += 4;
+    lon_p += 4;
+    char lat[16] = {0};
+    char lon[16] = {0};
+    int i = 0;
+    while(lat_p[i] && lat_p[i] != ' ' && lat_p[i] != ',' && i < 15) {
+        lat[i] = lat_p[i]; i++;
+    }
+    lat[i] = '\0';
+    i = 0;
+    while(lon_p[i] && ((lon_p[i] >= '0' && lon_p[i] <= '9') || lon_p[i] == '.' || lon_p[i] == '-') && i < 15) {
+        lon[i] = lon_p[i]; i++;
+    }
+    lon[i] = '\0';
+    if(i > 0 && lon[i - 1] == '.') lon[i - 1] = '\0';
+    snprintf(out, out_size, "%s, %s", lat, lon);
+}
+
+static void wardrive_parse_csv_ssid(const char* line, char* out, size_t out_size) {
+    const char* first_comma = strchr(line, ',');
+    if(!first_comma) {
+        strncpy(out, "(unknown)", out_size - 1);
+        out[out_size - 1] = '\0';
+        return;
+    }
+    const char* ssid_start = first_comma + 1;
+    const char* second_comma = strchr(ssid_start, ',');
+    if(!second_comma) {
+        strncpy(out, "(unknown)", out_size - 1);
+        out[out_size - 1] = '\0';
+        return;
+    }
+    size_t ssid_len = (size_t)(second_comma - ssid_start);
+    if(ssid_len == 0) {
+        strncpy(out, "(hidden)", out_size - 1);
+        out[out_size - 1] = '\0';
+        return;
+    }
+    if(ssid_len >= out_size) ssid_len = out_size - 1;
+    memcpy(out, ssid_start, ssid_len);
+    out[ssid_len] = '\0';
+}
+
 static int32_t wardrive_thread(void* context) {
     WardriveData* data = (WardriveData*)context;
     WiFiApp* app = data->app;
     
     furi_delay_ms(200);
     uart_clear_buffer(app);
-    uart_send_command(app, "start_wardrive");
+    uart_send_command(app, "start_wardrive_promisc");
     
-    // Wait for GPS fix and parse logs
     while(!data->attack_finished) {
         const char* line = uart_read_line(app, 500);
-        if(line) {
-            // Check for GPS fix
-            if(strstr(line, "GPS fix obtained")) {
-                data->gps_fix = true;
-            }
-            
-            // Parse "Logged N networks to /path/file.log"
-            const char* logged = strstr(line, "Logged ");
-            if(logged) {
-                logged += 7;
-                data->network_count = (uint32_t)strtol(logged, NULL, 10);
-                
-                // Copy the whole line for display
-                strncpy(data->last_log_line, line, sizeof(data->last_log_line) - 1);
-                data->last_log_line[sizeof(data->last_log_line) - 1] = '\0';
-            }
+        if(!line) {
+            furi_delay_ms(50);
+            continue;
         }
-        furi_delay_ms(100);
+
+        if(strstr(line, "GPS fix obtained")) {
+            data->gps_fix = true;
+            data->gps_lost = false;
+            data->wait_seconds = 0;
+            wardrive_parse_fix_coords(line, data->last_coords, sizeof(data->last_coords));
+        } else if(strstr(line, "GPS fix recovered")) {
+            data->gps_fix = true;
+            data->gps_lost = false;
+            wardrive_parse_fix_coords(line, data->last_coords, sizeof(data->last_coords));
+        } else if(strstr(line, "GPS fix lost")) {
+            data->gps_lost = true;
+        } else if(strstr(line, "Still waiting for GPS fix")) {
+            const char* paren = strchr(line, '(');
+            if(paren) {
+                data->wait_seconds = (uint32_t)strtol(paren + 1, NULL, 10);
+            }
+        } else if(strstr(line, "Promiscuous wardrive started")) {
+            data->wardrive_active = true;
+        } else if(strstr(line, "Wardrive promisc:")) {
+            const char* p = strstr(line, "Wardrive promisc: ");
+            if(p) {
+                p += 18;
+                data->network_count = (uint32_t)strtol(p, NULL, 10);
+            }
+        } else if(strstr(line, "Flushed ")) {
+            const char* p = strstr(line, "Flushed ") + 8;
+            uint32_t flushed = (uint32_t)strtol(p, NULL, 10);
+            if(flushed > data->network_count) {
+                data->network_count = flushed;
+            }
+        } else if(strstr(line, ",WIFI")) {
+            data->network_count++;
+            wardrive_parse_csv_ssid(line, data->last_ssid, sizeof(data->last_ssid));
+            wardrive_parse_csv_coords(line, data->last_coords, sizeof(data->last_coords));
+        }
+
+        furi_delay_ms(10);
     }
     
     return 0;
@@ -157,8 +273,12 @@ View* wardrive_screen_create(WiFiApp* app, void** out_data) {
     data->app = app;
     data->attack_finished = false;
     data->gps_fix = false;
-    memset(data->last_log_line, 0, sizeof(data->last_log_line));
+    data->gps_lost = false;
+    data->wardrive_active = false;
+    memset(data->last_ssid, 0, sizeof(data->last_ssid));
+    memset(data->last_coords, 0, sizeof(data->last_coords));
     data->network_count = 0;
+    data->wait_seconds = 0;
     data->thread = NULL;
     
     View* view = view_alloc();
