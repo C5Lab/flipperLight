@@ -340,7 +340,7 @@ void screen_wifi_scan_destroy(View* view) {
 
 typedef struct {
     const char* label;
-    uint8_t attack_id; // 0=Deauth,1=EvilTwin,2=SAE,3=Handshaker,4=Sniffer,5=RogueAP,6=ARP
+    uint8_t attack_id; // 0=Deauth,1=EvilTwin,2=SAE,3=Handshaker,4=Sniffer,5=RogueAP,6=ARP,7=MITM_PCAP
     bool red_team_only;
 } AttackMenuItem;
 
@@ -351,9 +351,10 @@ static const AttackMenuItem all_attack_items[] = {
     {"Handshaker",    3, true},
     {"Sniffer",       4, false},
     {"Rogue AP",      5, true},
-    {"ARP Poisoning", 6, true},
+    {"ARP Poisoning",    6, true},
+    {"MITM PCAP Sniffer", 7, true},
 };
-#define ALL_ATTACK_ITEM_COUNT 7
+#define ALL_ATTACK_ITEM_COUNT 8
 
 static uint8_t get_visible_attack_items(WiFiApp* app, AttackMenuItem* out, uint8_t max_out) {
     uint8_t count = 0;
@@ -438,8 +439,8 @@ static bool attack_selection_input(InputEvent* event, void* context) {
         if(visual_idx >= item_count) return true;
         uint8_t attack_type = visible[visual_idx].attack_id;
         
-        // Rogue AP and ARP Poisoning require exactly 1 selected network
-        if((attack_type == 5 || attack_type == 6) && app->selected_count != 1) {
+        // Rogue AP, ARP Poisoning, and MITM PCAP require exactly 1 selected network
+        if((attack_type == 5 || attack_type == 6 || attack_type == 7) && app->selected_count != 1) {
             // Cannot launch - need exactly 1 network
             return true;
         }
@@ -473,6 +474,9 @@ static bool attack_selection_input(InputEvent* event, void* context) {
         } else if(attack_type == 6) {
             attack_view = screen_arp_poisoning_create(app, &cleanup_data);
             cleanup_func = arp_poisoning_cleanup_internal;
+        } else if(attack_type == 7) {
+            attack_view = screen_mitm_pcap_create(app, &cleanup_data);
+            cleanup_func = mitm_pcap_cleanup_internal;
         }
         if(attack_view) {
             screen_push_with_cleanup(app, attack_view, cleanup_func, cleanup_data);

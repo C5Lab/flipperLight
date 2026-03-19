@@ -28,6 +28,8 @@ extern void global_handshaker_screen_cleanup(View* view, void* data);
 extern void portal_screen_cleanup(View* view, void* data);
 extern void sniffer_dog_screen_cleanup(View* view, void* data);
 extern void wardrive_screen_cleanup(View* view, void* data);
+extern View* beacon_spam_menu_create(WiFiApp* app, void** out_data);
+extern void beacon_spam_menu_cleanup(View* view, void* data);
 
 // ============================================================================
 // Menu Item Mapping
@@ -35,7 +37,7 @@ extern void wardrive_screen_cleanup(View* view, void* data);
 
 typedef struct {
     const char* label;
-    uint8_t action_id; // 0=Blackout, 1=Handshaker, 2=Portal, 3=SnifferDog, 4=Wardrive
+    uint8_t action_id; // 0=Blackout, 1=Handshaker, 2=Portal, 3=SnifferDog, 4=Wardrive, 5=BeaconSpam
     bool red_team_only;
 } GlobalMenuItem;
 
@@ -45,8 +47,9 @@ static const GlobalMenuItem all_global_items[] = {
     {"Portal",       2, false},
     {"Sniffer Dog",  3, true},
     {"Wardrive",     4, false},
+    {"Beacon Spam",  5, true},
 };
-#define ALL_GLOBAL_ITEM_COUNT 5
+#define ALL_GLOBAL_ITEM_COUNT 6
 
 static uint8_t get_visible_global_items(WiFiApp* app, GlobalMenuItem* out, uint8_t max_out) {
     uint8_t count = 0;
@@ -79,8 +82,14 @@ static void global_attacks_menu_draw(Canvas* canvas, void* model) {
     uint8_t item_count = get_visible_global_items(m->app, visible, ALL_GLOBAL_ITEM_COUNT);
     
     canvas_set_font(canvas, FontSecondary);
-    for(uint8_t i = 0; i < item_count; i++) {
-        uint8_t y = 22 + (i * 10);
+    const uint8_t max_visible = 5;
+    uint8_t start = 0;
+    if(m->selected >= max_visible) {
+        start = m->selected - max_visible + 1;
+    }
+
+    for(uint8_t i = start; i < item_count && (i - start) < max_visible; i++) {
+        uint8_t y = 22 + ((i - start) * 10);
         if(i == m->selected) {
             canvas_draw_box(canvas, 0, y - 8, 128, 10);
             canvas_set_color(canvas, ColorWhite);
@@ -141,6 +150,9 @@ static bool global_attacks_menu_input(InputEvent* event, void* context) {
         } else if(action == 4) {
             next = wardrive_screen_create(app, &data);
             cleanup = wardrive_screen_cleanup;
+        } else if(action == 5) {
+            next = beacon_spam_menu_create(app, &data);
+            cleanup = beacon_spam_menu_cleanup;
         }
         
         if(next) {
