@@ -177,7 +177,7 @@ static void wardrive_parse_fix_coords(const char* line, char* out, size_t out_si
     }
     lon[i] = '\0';
     if(i > 0 && lon[i - 1] == '.') lon[i - 1] = '\0';
-    snprintf(out, out_size, "%s, %s", lat, lon);
+    snprintf(out, out_size, "%.14s, %.14s", lat, lon);
 }
 
 static void wardrive_parse_csv_ssid(const char* line, char* out, size_t out_size) {
