@@ -161,7 +161,7 @@ static void wardrive_parse_csv_coords(const char* line, char* out, size_t out_si
 static void wardrive_parse_fix_coords(const char* line, char* out, size_t out_size) {
     const char* lat_p = strstr(line, "Lat=");
     const char* lon_p = strstr(line, "Lon=");
-    if(!lat_p || !lon_p) return;
+    if(!lat_p || !lon_p || out_size == 0) return;
     lat_p += 4;
     lon_p += 4;
     char lat[16] = {0};
@@ -177,7 +177,32 @@ static void wardrive_parse_fix_coords(const char* line, char* out, size_t out_si
     }
     lon[i] = '\0';
     if(i > 0 && lon[i - 1] == '.') lon[i - 1] = '\0';
-    snprintf(out, out_size, "%s, %s", lat, lon);
+    size_t lat_len = 0;
+    size_t lon_len = 0;
+    size_t pos = 0;
+
+    while(lat_len < sizeof(lat) && lat[lat_len] != '\0') {
+        lat_len++;
+    }
+    while(lon_len < sizeof(lon) && lon[lon_len] != '\0') {
+        lon_len++;
+    }
+
+    if(lat_len > out_size - 1) lat_len = out_size - 1;
+    memcpy(out, lat, lat_len);
+    pos = lat_len;
+
+    if(pos < out_size - 1) {
+        out[pos++] = ',';
+    }
+    if(pos < out_size - 1) {
+        out[pos++] = ' ';
+    }
+
+    if(lon_len > out_size - 1 - pos) lon_len = out_size - 1 - pos;
+    memcpy(out + pos, lon, lon_len);
+    pos += lon_len;
+    out[pos] = '\0';
 }
 
 static void wardrive_parse_csv_ssid(const char* line, char* out, size_t out_size) {

@@ -1,0 +1,45 @@
+name: Build FAP
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.track_name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - track_id: momentum_dev
+            track_name: Momentum Dev
+            sdk_id: mntm-dev-22408e4c
+            sdk_url: https://up.momentum-fw.dev/builds/firmware/dev/flipper-z-f7-sdk-mntm-dev-22408e4c.zip
+          - track_id: unleashed
+            track_name: Unleashed
+            sdk_id: unlshd-086
+            sdk_url: https://github.com/DarkFlippers/unleashed-firmware/releases/download/unlshd-086/flipper-z-f7-sdk-unlshd-086.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with ufbt
+        id: build-app
+        uses: flipperdevices/flipperzero-ufbt-action@v0.1.3
+        with:
+          app-dir: .
+          sdk-url: ${{ matrix.sdk_url }}
+          sdk-hw-target: f7
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-${{ matrix.track_id }}-${{ matrix.sdk_id }}-${{ steps.build-app.outputs.suffix }}
+          path: ${{ steps.build-app.outputs.fap-dir }}
+          if-no-files-found: error

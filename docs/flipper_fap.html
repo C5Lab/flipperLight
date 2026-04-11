@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Light flipper FAP uploader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #09111b;
+      --panel: rgba(11, 25, 39, 0.88);
+      --panel-strong: #0f1f31;
+      --border: rgba(162, 197, 235, 0.14);
+      --text: #eef7ff;
+      --muted: #98aec3;
+      --accent: #74f0cf;
+      --accent-2: #f7c56c;
+      --danger: #ff7f7f;
+      --success: #7af5b7;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Space Grotesk", system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(116, 240, 207, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(247, 197, 108, 0.10), transparent 24%),
+        linear-gradient(180deg, #071019 0%, #0a1622 100%);
+      padding: 28px 16px 64px;
+    }
+
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero,
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero {
+      padding: 26px;
+      background:
+        linear-gradient(145deg, rgba(116, 240, 207, 0.08), rgba(247, 197, 108, 0.06)),
+        var(--panel);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: clamp(34px, 6vw, 54px);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 760px;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 15px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.35fr 0.9fr;
+      gap: 18px;
+    }
+
+    .card {
+      padding: 20px;
+    }
+
+    .card h2 {
+      margin: 0 0 14px;
+      font-size: 19px;
+      letter-spacing: -0.02em;
+    }
+
+    .controls,
+    .howto {
+      display: grid;
+      gap: 14px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 14px;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: 700;
+      color: #071019;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--accent), #8dd7ff);
+      box-shadow: 0 12px 28px rgba(116, 240, 207, 0.22);
+      transition: transform 0.08s ease, opacity 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .field input[type="text"],
+    .field input[type="file"],
+    .field select {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      color: var(--text);
+      padding: 11px 12px;
+      font: inherit;
+    }
+
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .check input {
+      width: auto;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pill strong {
+      color: var(--text);
+    }
+
+    .status {
+      color: var(--muted);
+      font-size: 14px;
+      min-height: 20px;
+    }
+
+    .status.error {
+      color: var(--danger);
+    }
+
+    .progress {
+      width: 100%;
+      height: 12px;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .progress > span {
+      display: block;
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width 0.12s ease;
+    }
+
+    .log {
+      min-height: 180px;
+      max-height: 260px;
+      overflow: auto;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.24);
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #c3d6eb;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .howto p,
+    .howto li {
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    .howto ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    code {
+      font-family: Consolas, "SFMono-Regular", monospace;
+      color: var(--text);
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 920px) {
+      .grid,
+      .row {
+        grid-template-columns: 1fr;
+      }
+
+      body {
+        padding: 18px 12px 54px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Light flipper · Flipper Zero</div>
+      <h1>Browser FAP uploader</h1>
+      <p>
+        Connect the Flipper in CDC mode, fetch the newest release asset for your firmware track,
+        and upload it through WebSerial without qFlipper.
+      </p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Flash app</h2>
+        <div class="controls">
+          <div class="actions">
+            <button id="connectBtn" type="button">Connect</button>
+            <button id="fetchBtn" class="secondary" type="button">Fetch latest release</button>
+            <button id="uploadBtn" class="secondary" type="button" disabled>Upload</button>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="trackSelect">Firmware track</label>
+              <select id="trackSelect">
+                <option value="momentum_dev">Momentum Dev</option>
+                <option value="unleashed">Unleashed</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="fileInput">Local .fap override</label>
+              <input id="fileInput" type="file" accept=".fap,application/octet-stream">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="destPath">Target path on Flipper</label>
+            <input id="destPath" type="text" value="/ext/apps/GPIO/c5lab_dev.fap" spellcheck="false">
+          </div>
+
+          <label class="check">
+            <input id="runAfter" type="checkbox" checked>
+            Run app after upload
+          </label>
+
+          <div class="meta">
+            <span id="releasePill" class="pill" style="display:none;"></span>
+            <span id="filePill" class="pill" style="display:none;"></span>
+            <span id="speedPill" class="pill" style="display:none;"></span>
+          </div>
+
+          <div id="statusText" class="status">Ready. Fetch a release or pick a local file.</div>
+          <div class="progress" aria-label="Upload progress">
+            <span id="progressBar"></span>
+          </div>
+          <div id="log" class="log"></div>
+        </div>
+      </article>
+
+      <aside class="card">
+        <h2>How it works</h2>
+        <div class="howto">
+          <p>
+            Flipper must expose the CLI prompt over USB.
+            Set <code>Settings -> Power -> USB mode -> CDC</code> first.
+          </p>
+          <ul>
+            <li>Use Chrome or Edge on desktop. WebSerial needs HTTPS or localhost.</li>
+            <li>Click <code>Connect</code> and pick the Flipper CDC port.</li>
+            <li>Click <code>Fetch latest release</code> or choose a local <code>.fap</code>.</li>
+            <li>Click <code>Upload</code>. The page writes the file with <code>storage write_chunk</code>.</li>
+            <li>The default install path is <code>/ext/apps/GPIO/c5lab_dev.fap</code>.</li>
+          </ul>
+          <p>
+            Release source: <a id="releaseLink" href="https://github.com/C5Lab/flipperLight/releases/latest">latest GitHub release</a>.
+          </p>
+        </div>
+      </aside>
+    </section>
+
+    <div class="footer">
+      Hosted from <a href="https://github.com/C5Lab/flipperLight">C5Lab/flipperLight</a>.
+    </div>
+  </main>
+
+  <script>
+    const REPO_OWNER = "C5Lab";
+    const REPO_NAME = "flipperLight";
+    const RELEASES_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+    const DEFAULT_DEST_PATH = "/ext/apps/GPIO/c5lab_dev.fap";
+
+    const TRACKS = {
+      momentum_dev: {
+        label: "Momentum Dev",
+        matcher: /_momentum_dev\.fap$/i,
+      },
+      unleashed: {
+        label: "Unleashed",
+        matcher: /_unleashed\.fap$/i,
+      },
+    };
+
+    const ui = {
+      connectBtn: document.getElementById("connectBtn"),
+      fetchBtn: document.getElementById("fetchBtn"),
+      uploadBtn: document.getElementById("uploadBtn"),
+      fileInput: document.getElementById("fileInput"),
+      trackSelect: document.getElementById("trackSelect"),
+      destPath: document.getElementById("destPath"),
+      runAfter: document.getElementById("runAfter"),
+      statusText: document.getElementById("statusText"),
+      progressBar: document.getElementById("progressBar"),
+      log: document.getElementById("log"),
+      releasePill: document.getElementById("releasePill"),
+      filePill: document.getElementById("filePill"),
+      speedPill: document.getElementById("speedPill"),
+      releaseLink: document.getElementById("releaseLink"),
+    };
+
+    const state = {
+      port: null,
+      reader: null,
+      writer: null,
+      buffer: "",
+      connected: false,
+      fileData: null,
+      fileName: "",
+      latestRelease: null,
+      autoUpload: false,
+      autoUploadTriggered: false,
+    };
+
+    const encoder = new TextEncoder();
+
+    function log(message) {
+      const time = new Date().toLocaleTimeString();
+      ui.log.textContent += `[${time}] ${message}\n`;
+      ui.log.scrollTop = ui.log.scrollHeight;
+    }
+
+    function setStatus(message, isError = false) {
+      ui.statusText.textContent = message;
+      ui.statusText.classList.toggle("error", Boolean(isError));
+    }
+
+    function setProgress(percent) {
+      ui.progressBar.style.width = `${Math.max(0, Math.min(percent, 100))}%`;
+    }
+
+    function setSelectedFile(name, data, sourceLabel) {
+      state.fileName = name;
+      state.fileData = data;
+      ui.filePill.style.display = "inline-flex";
+      ui.filePill.textContent = `File: ${name}${sourceLabel ? ` · ${sourceLabel}` : ""}`;
+      if (!ui.destPath.value.trim()) {
+        ui.destPath.value = DEFAULT_DEST_PATH;
+      }
+      ui.uploadBtn.disabled = !state.connected || !state.fileData;
+    }
+
+    function ensureWebSerial() {
+      if (!("serial" in navigator)) {
+        throw new Error("WebSerial is not available. Use Chrome or Edge over HTTPS.");
+      }
+    }
+
+    async function sendText(text) {
+      await state.writer.write(encoder.encode(text));
+    }
+
+    async function readUntil(marker, timeoutMs = 6000) {
+      const start = performance.now();
+      while (true) {
+        const index = state.buffer.indexOf(marker);
+        if (index !== -1) {
+          const output = state.buffer.slice(0, index + marker.length);
+          state.buffer = state.buffer.slice(index + marker.length);
+          return output;
+        }
+
+        const result = await state.reader.read();
+        if (result.done) {
+          throw new Error("Serial port closed.");
+        }
+
+        state.buffer += result.value;
+        if (performance.now() - start > timeoutMs) {
+          throw new Error(`Timeout waiting for "${marker}"`);
+        }
+      }
+    }
+
+    function waitForPrompt() {
+      return readUntil(">: ");
+    }
+
+    async function disconnect() {
+      try {
+        if (state.reader) {
+          await state.reader.cancel();
+        }
+      } catch (_) {}
+
+      try {
+        if (state.writer) {
+          await state.writer.close();
+        }
+      } catch (_) {}
+
+      try {
+        if (state.port) {
+          await state.port.close();
+        }
+      } catch (_) {}
+
+      state.port = null;
+      state.reader = null;
+      state.writer = null;
+      state.buffer = "";
+      state.connected = false;
+      ui.connectBtn.textContent = "Connect";
+      ui.uploadBtn.disabled = !state.connected || !state.fileData;
+      ui.speedPill.style.display = "none";
+      setStatus("Disconnected.");
+    }
+
+    async function connect() {
+      ensureWebSerial();
+
+      if (state.connected) {
+        await disconnect();
+        return;
+      }
+
+      ui.connectBtn.disabled = true;
+      setStatus("Requesting serial port...");
+
+      try {
+        state.port = await navigator.serial.requestPort({});
+        await state.port.open({ baudRate: 115200 });
+
+        const decoder = new TextDecoderStream();
+        state.port.readable.pipeTo(decoder.writable);
+        state.reader = decoder.readable.getReader();
+        state.writer = state.port.writable.getWriter();
+        state.buffer = "";
+
+        await waitForPrompt();
+        state.connected = true;
+        ui.connectBtn.textContent = "Disconnect";
+        ui.uploadBtn.disabled = !state.fileData;
+        setStatus("Connected to Flipper CLI.");
+        log("Connected. CLI prompt detected.");
+
+        if (!state.fileData) {
+          await fetchLatestReleaseAsset();
+        } else if (state.autoUpload && !state.autoUploadTriggered) {
+          state.autoUploadTriggered = true;
+          await uploadFile();
+        }
+      } catch (error) {
+        await disconnect();
+        setStatus(error.message || "Connection failed.", true);
+        log(`Error: ${error.message || error}`);
+      } finally {
+        ui.connectBtn.disabled = false;
+      }
+    }
+
+    async function fetchLatestRelease() {
+      const response = await fetch(RELEASES_API, {
+        cache: "no-store",
+        headers: {
+          Accept: "application/vnd.github+json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`GitHub release lookup failed: ${response.status} ${response.statusText}`);
+      }
+
+      const release = await response.json();
+      state.latestRelease = release;
+      ui.releasePill.style.display = "inline-flex";
+      ui.releasePill.textContent = `Release: ${release.tag_name || "latest"}`;
+      if (release.html_url) {
+        ui.releaseLink.href = release.html_url;
+      }
+      return release;
+    }
+
+    function findAssetForTrack(release, trackId) {
+      const track = TRACKS[trackId];
+      if (!track) {
+        throw new Error(`Unsupported track: ${trackId}`);
+      }
+
+      const asset = (release.assets || []).find((item) => track.matcher.test(item.name || ""));
+      if (!asset) {
+        throw new Error(`No release asset for ${track.label}.`);
+      }
+
+      return asset;
+    }
+
+    async function fetchLatestReleaseAsset() {
+      const trackId = ui.trackSelect.value;
+      const track = TRACKS[trackId];
+      setStatus(`Fetching latest ${track.label} release asset...`);
+      log(`Fetching latest release asset for ${track.label}.`);
+
+      try {
+        const release = await fetchLatestRelease();
+        const asset = findAssetForTrack(release, trackId);
+        const response = await fetch(asset.browser_download_url, {
+          cache: "no-store",
+          headers: {
+            Accept: "application/octet-stream",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Asset download failed: ${response.status} ${response.statusText}`);
+        }
+
+        const data = new Uint8Array(await response.arrayBuffer());
+        setSelectedFile(asset.name, data, release.tag_name || "latest");
+        setStatus(`Ready to upload ${asset.name}.`);
+        log(`Fetched ${asset.name} (${data.length} bytes).`);
+
+        if (state.autoUpload && state.connected && !state.autoUploadTriggered) {
+          state.autoUploadTriggered = true;
+          await uploadFile();
+        }
+      } catch (error) {
+        setStatus(error.message || "Release fetch failed.", true);
+        log(`Error: ${error.message || error}`);
+      }
+    }
+
+    async function ensureTargetDir(path) {
+      const parts = path.split("/").filter(Boolean);
+      if (parts.length < 2) {
+        return;
+      }
+
+      let current = "";
+      for (let index = 0; index < parts.length - 1; index += 1) {
+        current += `/${parts[index]}`;
+        try {
+          await sendText(`storage mkdir "${current}"\r`);
+          await readUntil("\r\n");
+          await waitForPrompt();
+        } catch (_) {
+          state.buffer = "";
+        }
+      }
+    }
+
+    async function runApp(path) {
+      try {
+        await sendText(`loader open "${path}"\r`);
+        await waitForPrompt();
+        log(`Launch command sent for ${path}.`);
+      } catch (error) {
+        log(`Warning: auto-run failed: ${error.message || error}`);
+      }
+    }
+
+    async function uploadFile() {
+      if (!state.connected) {
+        setStatus("Connect to Flipper first.", true);
+        return;
+      }
+      if (!state.fileData || !state.fileName) {
+        setStatus("Fetch a release or pick a local .fap first.", true);
+        return;
+      }
+
+      state.autoUploadTriggered = true;
+      const destination = (ui.destPath.value.trim() || DEFAULT_DEST_PATH).replace(/\\/g, "/");
+      const data = state.fileData;
+      const chunkSize = 8192;
+
+      ui.uploadBtn.disabled = true;
+      ui.speedPill.style.display = "inline-flex";
+      setProgress(0);
+      setStatus(`Uploading ${state.fileName} to ${destination}...`);
+      log(`Uploading ${state.fileName} to ${destination}.`);
+
+      try {
+        await ensureTargetDir(destination);
+
+        try {
+          await sendText(`storage remove "${destination}"\r`);
+          await readUntil("\r\n");
+          await waitForPrompt();
+        } catch (_) {
+          state.buffer = "";
+        }
+
+        const started = performance.now();
+        let sent = 0;
+
+        while (sent < data.length) {
+          const chunk = data.subarray(sent, Math.min(sent + chunkSize, data.length));
+          await sendText(`storage write_chunk "${destination}" ${chunk.length}\r`);
+          const reply = await readUntil("\r\n");
+          if (reply.includes("Storage error")) {
+            await waitForPrompt().catch(() => {});
+            throw new Error(reply.trim());
+          }
+
+          await state.writer.write(chunk);
+          await waitForPrompt();
+
+          sent += chunk.length;
+          const percent = Math.round((sent / data.length) * 100);
+          const elapsed = Math.max((performance.now() - started) / 1000, 0.001);
+          const speed = sent / 1024 / elapsed;
+
+          setProgress(percent);
+          ui.speedPill.textContent = `Speed: ${speed.toFixed(1)} KB/s`;
+          log(`Chunk ${percent}% (${sent}/${data.length} bytes).`);
+        }
+
+        setStatus("Upload complete.");
+        log("Upload complete.");
+        if (ui.runAfter.checked) {
+          await runApp(destination);
+        }
+      } catch (error) {
+        state.autoUploadTriggered = false;
+        setStatus(error.message || "Upload failed.", true);
+        log(`Error: ${error.message || error}`);
+      } finally {
+        ui.uploadBtn.disabled = !state.connected || !state.fileData;
+      }
+    }
+
+    function applyQueryParams() {
+      const params = new URLSearchParams(window.location.search);
+      const track = params.get("track");
+      if (track && TRACKS[track]) {
+        ui.trackSelect.value = track;
+      }
+
+      const auto = params.get("auto");
+      if (auto) {
+        state.autoUpload = ["1", "true", "yes"].includes(auto.toLowerCase());
+      }
+    }
+
+    ui.connectBtn.addEventListener("click", () => {
+      connect().catch(() => {});
+    });
+
+    ui.fetchBtn.addEventListener("click", () => {
+      fetchLatestReleaseAsset().catch(() => {});
+    });
+
+    ui.uploadBtn.addEventListener("click", () => {
+      uploadFile().catch(() => {});
+    });
+
+    ui.fileInput.addEventListener("change", async (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) {
+        return;
+      }
+
+      const data = new Uint8Array(await file.arrayBuffer());
+      setSelectedFile(file.name, data, "local file");
+      setStatus(`Ready to upload ${file.name}.`);
+      log(`Loaded local file ${file.name} (${data.length} bytes).`);
+    });
+
+    ui.trackSelect.addEventListener("change", () => {
+      if (state.latestRelease) {
+        fetchLatestReleaseAsset().catch(() => {});
+      }
+    });
+
+    applyQueryParams();
+    fetchLatestReleaseAsset().catch(() => {});
+  </script>
+</body>
+</html>
