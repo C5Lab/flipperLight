@@ -28,6 +28,8 @@ If the tag already exists, the release workflow skips publishing.
 The browser uploader lives in `docs/flipper_fap.html`.
 
 It fetches the latest release asset from this repository and uploads it to Flipper over WebSerial.
+GitHub Pages deploy mirrors the latest release assets into the Pages artifact under same-origin `downloads/` paths to avoid CORS issues with `github.com/releases/download/...`.
+
 Default install path:
 - `/ext/apps/GPIO/c5lab_dev.fap`
 

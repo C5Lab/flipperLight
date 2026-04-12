@@ -377,7 +377,7 @@
   <script>
     const REPO_OWNER = "C5Lab";
     const REPO_NAME = "flipperLight";
-    const RELEASES_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+    const RELEASE_MANIFEST_URL = new URL("./site-data/latest-release.json", window.location.href).href;
     const DEFAULT_DEST_PATH = "/ext/apps/GPIO/c5lab_dev.fap";
 
     const TRACKS = {
@@ -559,21 +559,21 @@
     }
 
     async function fetchLatestRelease() {
-      const response = await fetch(RELEASES_API, {
+      const response = await fetch(RELEASE_MANIFEST_URL, {
         cache: "no-store",
         headers: {
-          Accept: "application/vnd.github+json",
+          Accept: "application/json",
         },
       });
 
       if (!response.ok) {
-        throw new Error(`GitHub release lookup failed: ${response.status} ${response.statusText}`);
+        throw new Error(`Release manifest lookup failed: ${response.status} ${response.statusText}`);
       }
 
       const release = await response.json();
       state.latestRelease = release;
       ui.releasePill.style.display = "inline-flex";
-      ui.releasePill.textContent = `Release: ${release.tag_name || "latest"}`;
+      ui.releasePill.textContent = `Release: ${release.tag_name || "not published yet"}`;
       if (release.html_url) {
         ui.releaseLink.href = release.html_url;
       }
@@ -586,9 +586,12 @@
         throw new Error(`Unsupported track: ${trackId}`);
       }
 
-      const asset = (release.assets || []).find((item) => track.matcher.test(item.name || ""));
+      const asset = release.assets && release.assets[trackId];
       if (!asset) {
         throw new Error(`No release asset for ${track.label}.`);
+      }
+      if (!track.matcher.test(asset.name || "")) {
+        throw new Error(`Release asset name for ${track.label} is invalid.`);
       }
 
       return asset;
@@ -603,7 +606,7 @@
       try {
         const release = await fetchLatestRelease();
         const asset = findAssetForTrack(release, trackId);
-        const response = await fetch(asset.browser_download_url, {
+        const response = await fetch(new URL(asset.url, window.location.href).href, {
           cache: "no-store",
           headers: {
             Accept: "application/octet-stream",
