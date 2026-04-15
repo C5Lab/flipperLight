@@ -50,6 +50,9 @@ View* screen_arp_poisoning_create(WiFiApp* app, void** out_data);
 // MITM PCAP Sniffer - connects to network, captures traffic to PCAP
 View* screen_mitm_pcap_create(WiFiApp* app, void** out_data);
 
+// Nmap - connects to network, discovers hosts, port scans
+View* screen_nmap_create(WiFiApp* app, void** out_data);
+
 // Deauth Detector - monitors for deauthentication attacks
 View* screen_deauth_detector_create(WiFiApp* app, void** out_data);
 
@@ -77,6 +80,7 @@ void sniffer_cleanup(View* view, void* data);
 void rogue_ap_cleanup_internal(View* view, void* data);
 void arp_poisoning_cleanup_internal(View* view, void* data);
 void mitm_pcap_cleanup_internal(View* view, void* data);
+void nmap_cleanup_internal(View* view, void* data);
 void deauth_detector_cleanup_internal(View* view, void* data);
 void karma_probe_cleanup_internal(View* view, void* data);
 void deauth_client_cleanup_internal(View* view, void* data);

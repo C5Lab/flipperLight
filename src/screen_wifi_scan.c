@@ -353,8 +353,9 @@ static const AttackMenuItem all_attack_items[] = {
     {"Rogue AP",      5, true},
     {"ARP Poisoning",    6, true},
     {"MITM PCAP Sniffer", 7, true},
+    {"Nmap",             8, true},
 };
-#define ALL_ATTACK_ITEM_COUNT 8
+#define ALL_ATTACK_ITEM_COUNT 9
 
 static uint8_t get_visible_attack_items(WiFiApp* app, AttackMenuItem* out, uint8_t max_out) {
     uint8_t count = 0;
@@ -439,8 +440,8 @@ static bool attack_selection_input(InputEvent* event, void* context) {
         if(visual_idx >= item_count) return true;
         uint8_t attack_type = visible[visual_idx].attack_id;
         
-        // Rogue AP, ARP Poisoning, and MITM PCAP require exactly 1 selected network
-        if((attack_type == 5 || attack_type == 6 || attack_type == 7) && app->selected_count != 1) {
+        // Rogue AP, ARP Poisoning, MITM PCAP, and Nmap require exactly 1 selected network
+        if((attack_type == 5 || attack_type == 6 || attack_type == 7 || attack_type == 8) && app->selected_count != 1) {
             // Cannot launch - need exactly 1 network
             return true;
         }
@@ -477,6 +478,9 @@ static bool attack_selection_input(InputEvent* event, void* context) {
         } else if(attack_type == 7) {
             attack_view = screen_mitm_pcap_create(app, &cleanup_data);
             cleanup_func = mitm_pcap_cleanup_internal;
+        } else if(attack_type == 8) {
+            attack_view = screen_nmap_create(app, &cleanup_data);
+            cleanup_func = nmap_cleanup_internal;
         }
         if(attack_view) {
             screen_push_with_cleanup(app, attack_view, cleanup_func, cleanup_data);

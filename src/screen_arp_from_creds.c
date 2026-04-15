@@ -295,8 +295,8 @@ static int32_t arp_from_creds_thread(void* context) {
     start = furi_get_tick();
     uint32_t last_rx = start;
 
-    while((furi_get_tick() - last_rx) < 3000 &&
-          (furi_get_tick() - start) < 20000 &&
+    while((furi_get_tick() - last_rx) < 10000 &&
+          (furi_get_tick() - start) < 30000 &&
           !data->attack_finished) {
         const char* line = uart_read_line(app, 500);
         if(line) {
@@ -308,13 +308,22 @@ static int32_t arp_from_creds_thread(void* context) {
                 continue;
             }
 
-            if(in_host_section && data->host_count < ARP_CREDS_MAX_HOSTS) {
-                // Parse "  IP  ->  MAC"
+            if(in_host_section) {
+                if(strstr(line, "========================") || strstr(line, "Found ")) {
+                    in_host_section = false;
+                    continue;
+                }
+
+                if(data->host_count >= ARP_CREDS_MAX_HOSTS) continue;
+
+                // Skip (MAC unknown) hosts - can't arp_ban without MAC
+                if(strstr(line, "(MAC unknown)")) continue;
+
+                // Parse "  IP  ->  MAC  [ARP]"
                 char ip[16] = {0};
                 char mac[18] = {0};
                 const char* arrow = strstr(line, "->");
                 if(arrow) {
-                    // Extract IP (before ->)
                     const char* p = line;
                     while(*p == ' ') p++;
                     size_t ip_len = 0;
@@ -323,7 +332,6 @@ static int32_t arp_from_creds_thread(void* context) {
                     }
                     ip[ip_len] = '\0';
 
-                    // Extract MAC (after ->)
                     p = arrow + 2;
                     while(*p == ' ') p++;
                     size_t mac_len = 0;
