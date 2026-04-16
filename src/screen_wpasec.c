@@ -485,14 +485,14 @@ static int32_t wpasec_thread(void* context) {
         // Connect to WiFi
         data->state = 7;
         char cmd[128];
-        snprintf(cmd, sizeof(cmd), "wifi_connect %s %s", data->ssid, data->password);
+        snprintf(cmd, sizeof(cmd), "wifi_connect \"%s\" \"%s\"", data->ssid, data->password);
         FURI_LOG_I(TAG, "Sending: %s", cmd);
         uart_clear_buffer(app);
         uart_send_command(app, cmd);
 
         bool connected = false;
         uint32_t start = furi_get_tick();
-        while((furi_get_tick() - start) < 15000 && !data->should_exit) {
+        while((furi_get_tick() - start) < 30000 && !data->should_exit) {
             const char* line = uart_read_line(app, 500);
             if(line) {
                 FURI_LOG_I(TAG, "wifi_connect: %s", line);
@@ -503,7 +503,7 @@ static int32_t wpasec_thread(void* context) {
                     app->wifi_connected = true;
                     break;
                 }
-                if(strstr(line, "FAIL") || strstr(line, "Error") || strstr(line, "error")) {
+                if(strstr(line, "FAILED:") || strstr(line, "wrong password") || strstr(line, "Unrecognized")) {
                     data->connect_failed = true;
                     FURI_LOG_E(TAG, "Connection failed");
                     break;

@@ -245,7 +245,7 @@ static int32_t arp_from_creds_thread(void* context) {
     // Step 1: Connect to WiFi
     data->state = 0;
     char cmd[128];
-    snprintf(cmd, sizeof(cmd), "wifi_connect %s %s", data->ssid, data->password);
+    snprintf(cmd, sizeof(cmd), "wifi_connect \"%s\" \"%s\"", data->ssid, data->password);
     FURI_LOG_I(TAG, "Sending: %s", cmd);
     furi_delay_ms(200);
     uart_clear_buffer(app);

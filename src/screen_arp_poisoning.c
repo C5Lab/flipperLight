@@ -409,7 +409,7 @@ static int32_t arp_poisoning_thread(void* context) {
 
     // Step 3: Connect to WiFi
     data->state = 2;
-    snprintf(cmd, sizeof(cmd), "wifi_connect %s %s", data->ssid, data->password);
+    snprintf(cmd, sizeof(cmd), "wifi_connect \"%s\" \"%s\"", data->ssid, data->password);
     FURI_LOG_I(TAG, "Sending: %s", cmd);
     uart_clear_buffer(app);
     uart_send_command(app, cmd);

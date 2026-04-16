@@ -21,13 +21,13 @@ extern View* blackout_screen_create(WiFiApp* app, void** out_data);
 extern View* global_handshaker_screen_create(WiFiApp* app, void** out_data);
 extern View* portal_screen_create(WiFiApp* app, void** out_data);
 extern View* sniffer_dog_screen_create(WiFiApp* app, void** out_data);
-extern View* wardrive_screen_create(WiFiApp* app, void** out_data);
+extern View* wardrive_menu_create(WiFiApp* app, void** out_data);
 
 extern void blackout_screen_cleanup(View* view, void* data);
 extern void global_handshaker_screen_cleanup(View* view, void* data);
 extern void portal_screen_cleanup(View* view, void* data);
 extern void sniffer_dog_screen_cleanup(View* view, void* data);
-extern void wardrive_screen_cleanup(View* view, void* data);
+extern void wardrive_menu_cleanup(View* view, void* data);
 extern View* beacon_spam_menu_create(WiFiApp* app, void** out_data);
 extern void beacon_spam_menu_cleanup(View* view, void* data);
 
@@ -42,12 +42,12 @@ typedef struct {
 } GlobalMenuItem;
 
 static const GlobalMenuItem all_global_items[] = {
+    {"Beacon Spam",  5, true},
     {"Blackout",     0, true},
     {"Handshaker",   1, true},
     {"Portal",       2, false},
     {"Sniffer Dog",  3, true},
     {"Wardrive",     4, false},
-    {"Beacon Spam",  5, true},
 };
 #define ALL_GLOBAL_ITEM_COUNT 6
 
@@ -148,8 +148,8 @@ static bool global_attacks_menu_input(InputEvent* event, void* context) {
             next = sniffer_dog_screen_create(app, &data);
             cleanup = sniffer_dog_screen_cleanup;
         } else if(action == 4) {
-            next = wardrive_screen_create(app, &data);
-            cleanup = wardrive_screen_cleanup;
+            next = wardrive_menu_create(app, &data);
+            cleanup = wardrive_menu_cleanup;
         } else if(action == 5) {
             next = beacon_spam_menu_create(app, &data);
             cleanup = beacon_spam_menu_cleanup;
