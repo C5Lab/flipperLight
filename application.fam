@@ -10,7 +10,7 @@ App(
     fap_icon_assets="gfx",
     fap_category="GPIO",
     fap_author="WiFi Security",
-    fap_version="0.0.1",
+    fap_version="0.0.2",
     fap_description="WiFi penetration testing suite for ESP32C5 module via UART",
     sources=[
         "src/app.c",
