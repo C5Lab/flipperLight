@@ -412,7 +412,16 @@ static int32_t evil_twin_thread(void* context) {
                 }
             }
             
-            if(strstr(line, "Password verified!")) data->password_verified = true;
+            if(strstr(line, "Password verified!")) {
+                data->password_verified = true;
+                // Cache verified credentials so subsequent attacks (Rogue AP / ARP /
+                // MITM PCAP / Nmap) on this SSID skip the "Checking password..." step.
+                const char* cached_ssid = furi_string_get_cstr(app->current_ssid);
+                const char* cached_pass = furi_string_get_cstr(app->current_password);
+                if(cached_ssid && cached_ssid[0] && cached_pass && cached_pass[0]) {
+                    password_cache_put(app, cached_ssid, cached_pass);
+                }
+            }
             if(strstr(line, "Evil Twin portal shut down")) {
                 data->portal_shutdown = true;
                 data->attack_finished = true;

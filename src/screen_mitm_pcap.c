@@ -97,6 +97,7 @@ static void mitm_password_callback(void* context) {
     if(!data || !data->app) return;
 
     FURI_LOG_I(TAG, "Password entered: %s", data->password);
+    password_cache_put(data->app, data->ssid, data->password);
     data->password_entered = true;
     data->state = 2;
 
@@ -216,61 +217,6 @@ static bool mitm_pcap_input(InputEvent* event, void* context) {
 }
 
 // ============================================================================
-// Password discovery helper (same logic as ARP Poisoning)
-// ============================================================================
-
-static bool mitm_check_password(MitmPcapData* data) {
-    WiFiApp* app = data->app;
-
-    uart_clear_buffer(app);
-    uart_send_command(app, "show_pass evil");
-    furi_delay_ms(200);
-
-    uint32_t start = furi_get_tick();
-    uint32_t last_rx = start;
-
-    while((furi_get_tick() - last_rx) < 1000 &&
-          (furi_get_tick() - start) < 5000 &&
-          !data->attack_finished) {
-        const char* line = uart_read_line(app, 300);
-        if(line) {
-            last_rx = furi_get_tick();
-            FURI_LOG_I(TAG, "show_pass: %s", line);
-
-            const char* p = line;
-            while(*p == ' ' || *p == '\t') p++;
-            if(*p != '"') continue;
-            p++;
-            const char* ssid_start = p;
-            while(*p && *p != '"') p++;
-            if(*p != '"') continue;
-            size_t ssid_len = p - ssid_start;
-            p++;
-
-            while(*p == ',' || *p == ' ' || *p == '\t') p++;
-
-            if(*p != '"') continue;
-            p++;
-            const char* pass_start = p;
-            while(*p && *p != '"') p++;
-            if(*p != '"') continue;
-            size_t pass_len = p - pass_start;
-
-            if(ssid_len == strlen(data->ssid) &&
-               strncmp(ssid_start, data->ssid, ssid_len) == 0) {
-                if(pass_len < sizeof(data->password)) {
-                    strncpy(data->password, pass_start, pass_len);
-                    data->password[pass_len] = '\0';
-                    FURI_LOG_I(TAG, "Password found: %s", data->password);
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
-// ============================================================================
 // Attack Thread
 // ============================================================================
 
@@ -284,14 +230,15 @@ static int32_t mitm_pcap_thread(void* context) {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "select_networks %lu", (unsigned long)data->net_index);
     uart_send_command(app, cmd);
-    furi_delay_ms(500);
+    furi_delay_ms(100);
     uart_clear_buffer(app);
 
     if(data->attack_finished) return 0;
 
-    // Step 2: Check if password is known
+    // Step 2: Check if password is known (cache + show_pass evil fallback)
     data->state = 0;
-    bool found = mitm_check_password(data);
+    bool found = attack_resolve_password(
+        app, data->ssid, data->password, sizeof(data->password), &data->attack_finished);
 
     if(data->attack_finished) return 0;
 

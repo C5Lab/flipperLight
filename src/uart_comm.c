@@ -344,6 +344,133 @@ void uart_clear_buffer(WiFiApp* app) {
 }
 
 //=============================================================================
+// Password cache (shared between Rogue AP / ARP / MITM PCAP / Nmap screens)
+//=============================================================================
+
+#define PASSWORD_REFRESH_INITIAL_DELAY_MS  50
+#define PASSWORD_REFRESH_TOTAL_TIMEOUT_MS  1500
+#define PASSWORD_REFRESH_SILENCE_MS        250
+#define PASSWORD_REFRESH_LINE_TIMEOUT_MS   100
+
+bool password_cache_lookup(WiFiApp* app, const char* ssid, char* out, size_t out_size) {
+    if(!app || !ssid || !out || out_size == 0) return false;
+
+    for(uint8_t i = 0; i < app->password_cache_count; i++) {
+        if(strncmp(app->password_cache[i].ssid, ssid, sizeof(app->password_cache[i].ssid)) == 0) {
+            strncpy(out, app->password_cache[i].password, out_size - 1);
+            out[out_size - 1] = '\0';
+            return true;
+        }
+    }
+    return false;
+}
+
+void password_cache_put(WiFiApp* app, const char* ssid, const char* password) {
+    if(!app || !ssid || !password || ssid[0] == '\0') return;
+
+    // Update existing entry if SSID is already cached.
+    for(uint8_t i = 0; i < app->password_cache_count; i++) {
+        if(strncmp(app->password_cache[i].ssid, ssid, sizeof(app->password_cache[i].ssid)) == 0) {
+            strncpy(app->password_cache[i].password, password,
+                sizeof(app->password_cache[i].password) - 1);
+            app->password_cache[i].password[sizeof(app->password_cache[i].password) - 1] = '\0';
+            return;
+        }
+    }
+
+    // Append, or overwrite oldest (slot 0) when full.
+    uint8_t slot;
+    if(app->password_cache_count < MAX_CACHED_PASSWORDS) {
+        slot = app->password_cache_count++;
+    } else {
+        // Shift left, drop oldest.
+        memmove(&app->password_cache[0], &app->password_cache[1],
+            sizeof(CachedPassword) * (MAX_CACHED_PASSWORDS - 1));
+        slot = MAX_CACHED_PASSWORDS - 1;
+    }
+
+    strncpy(app->password_cache[slot].ssid, ssid, sizeof(app->password_cache[slot].ssid) - 1);
+    app->password_cache[slot].ssid[sizeof(app->password_cache[slot].ssid) - 1] = '\0';
+    strncpy(app->password_cache[slot].password, password,
+        sizeof(app->password_cache[slot].password) - 1);
+    app->password_cache[slot].password[sizeof(app->password_cache[slot].password) - 1] = '\0';
+
+    FURI_LOG_I(TAG, "Cache put: '%s' -> %u entries", ssid, app->password_cache_count);
+}
+
+bool password_cache_refresh(WiFiApp* app, bool force, volatile bool* cancel) {
+    if(!app) return false;
+    if(!force && app->password_cache_loaded) return true;
+    if(cancel && *cancel) return false;
+
+    uart_clear_buffer(app);
+    uart_send_command(app, "show_pass evil");
+    furi_delay_ms(PASSWORD_REFRESH_INITIAL_DELAY_MS);
+
+    uint32_t start = furi_get_tick();
+    uint32_t last_rx = start;
+
+    while((furi_get_tick() - last_rx) < PASSWORD_REFRESH_SILENCE_MS &&
+          (furi_get_tick() - start) < PASSWORD_REFRESH_TOTAL_TIMEOUT_MS &&
+          (!cancel || !*cancel)) {
+
+        const char* line = uart_read_line(app, PASSWORD_REFRESH_LINE_TIMEOUT_MS);
+        if(!line) continue;
+
+        last_rx = furi_get_tick();
+
+        // Skip command echo.
+        if(strncmp(line, "show_pass", 9) == 0) continue;
+        // Skip non-CSV lines (only "SSID","PASSWORD" entries start with a quote).
+        if(line[0] != '"') continue;
+
+        const char* p = line;
+        char ssid[33] = {0};
+        char password[65] = {0};
+
+        if(!csv_next_quoted_field(&p, ssid, sizeof(ssid))) continue;
+        if(!csv_next_quoted_field(&p, password, sizeof(password))) continue;
+        if(ssid[0] == '\0') continue;
+
+        password_cache_put(app, ssid, password);
+    }
+
+    if(cancel && *cancel) {
+        FURI_LOG_I(TAG, "Password cache refresh cancelled");
+        return false;
+    }
+
+    app->password_cache_loaded = true;
+    FURI_LOG_I(TAG, "Password cache refreshed: %u entries", app->password_cache_count);
+    return true;
+}
+
+bool attack_resolve_password(
+    WiFiApp* app,
+    const char* ssid,
+    char* out,
+    size_t out_size,
+    volatile bool* cancel) {
+    if(!app || !ssid || !out || out_size == 0) return false;
+
+    if(password_cache_lookup(app, ssid, out, out_size)) {
+        FURI_LOG_I(TAG, "Password cache hit for '%s'", ssid);
+        return true;
+    }
+
+    if(!app->password_cache_loaded) {
+        password_cache_refresh(app, false, cancel);
+        if(cancel && *cancel) return false;
+        if(password_cache_lookup(app, ssid, out, out_size)) {
+            FURI_LOG_I(TAG, "Password found after refresh for '%s'", ssid);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+//=============================================================================
 // Scanning helpers
 //=============================================================================
 

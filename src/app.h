@@ -29,6 +29,14 @@ typedef struct {
 
 #define MAX_SCAN_RESULTS 64
 
+// Cached password entry (populated from `show_pass evil` and from successful captures)
+#define MAX_CACHED_PASSWORDS 32
+
+typedef struct {
+    char ssid[33];
+    char password[65];
+} CachedPassword;
+
 // Screen context structure
 typedef struct {
     WiFiApp* app;
@@ -92,6 +100,13 @@ struct WiFiApp {
     
     // WiFi connection status (set by wifi_connect success in ARP/wpasec screens)
     bool wifi_connected;
+
+    // Cache of known WPA passwords keyed by SSID. Populated lazily from `show_pass evil`
+    // and also after successful captures (Evil Twin, Portal, Karma, Rogue AP).
+    // Prevents re-running `show_pass evil` on every attack screen.
+    CachedPassword password_cache[MAX_CACHED_PASSWORDS];
+    uint8_t password_cache_count;
+    bool password_cache_loaded;
 };
 
 // App entry point

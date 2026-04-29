@@ -115,6 +115,7 @@ static void wpasec_password_callback(void* context) {
     if(!data || !data->app) return;
 
     FURI_LOG_I(TAG, "Password entered: %s", data->password);
+    password_cache_put(data->app, data->ssid, data->password);
     data->password_entered = true;
     data->state = 7; // Move to connecting
 
@@ -132,62 +133,6 @@ static void wpasec_show_text_input(WpasecData* data) {
     }
 
     view_dispatcher_switch_to_view(data->app->view_dispatcher, WPASEC_TEXT_INPUT_ID);
-}
-
-// ============================================================================
-// Password discovery helper (Evil Twin passwords)
-// ============================================================================
-
-static bool wpasec_check_password(WpasecData* data) {
-    WiFiApp* app = data->app;
-
-    uart_clear_buffer(app);
-    uart_send_command(app, "show_pass evil");
-    furi_delay_ms(200);
-
-    uint32_t start = furi_get_tick();
-    uint32_t last_rx = start;
-
-    while((furi_get_tick() - last_rx) < 1000 &&
-          (furi_get_tick() - start) < 5000 &&
-          !data->should_exit) {
-        const char* line = uart_read_line(app, 300);
-        if(line) {
-            last_rx = furi_get_tick();
-            FURI_LOG_I(TAG, "show_pass: %s", line);
-
-            // Parse "SSID", "password"
-            const char* p = line;
-            while(*p == ' ' || *p == '\t') p++;
-            if(*p != '"') continue;
-            p++;
-            const char* ssid_start = p;
-            while(*p && *p != '"') p++;
-            if(*p != '"') continue;
-            size_t ssid_len = (size_t)(p - ssid_start);
-            p++;
-
-            while(*p == ',' || *p == ' ' || *p == '\t') p++;
-
-            if(*p != '"') continue;
-            p++;
-            const char* pass_start = p;
-            while(*p && *p != '"') p++;
-            if(*p != '"') continue;
-            size_t pass_len = (size_t)(p - pass_start);
-
-            if(ssid_len == strlen(data->ssid) &&
-               strncmp(ssid_start, data->ssid, ssid_len) == 0) {
-                if(pass_len < sizeof(data->password)) {
-                    strncpy(data->password, pass_start, pass_len);
-                    data->password[pass_len] = '\0';
-                    FURI_LOG_I(TAG, "Password found via Evil Twin: %s", data->password);
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
 }
 
 // ============================================================================
@@ -460,10 +405,11 @@ static int32_t wpasec_thread(void* context) {
         }
         if(data->should_exit) return 0;
 
-        // Try to get password from Evil Twin data
+        // Try to get password from cache / Evil Twin data
         data->state = 5;
         FURI_LOG_I(TAG, "Checking Evil Twin passwords for %s", data->ssid);
-        bool pw_found = wpasec_check_password(data);
+        bool pw_found = attack_resolve_password(
+            app, data->ssid, data->password, sizeof(data->password), &data->should_exit);
 
         if(data->should_exit) return 0;
 
