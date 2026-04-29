@@ -165,6 +165,16 @@ static bool boot_input(InputEvent* event, void* context) {
             view_dispatcher_send_custom_event(app->view_dispatcher, BOOT_EVENT_CANCELLED);
             return true;
         }
+    } else if(data->phase == BootPhaseSuccess) {
+        // Defensive: in normal flow the boot screen is removed from the stack
+        // immediately after BOOT_EVENT_DONE. If for any reason it is still
+        // reachable (e.g. user navigates back through everything), make sure
+        // BACK / OK still let the user exit instead of being trapped here.
+        if(event->key == InputKeyBack || event->key == InputKeyOk) {
+            view_commit_model(view, false);
+            view_dispatcher_send_custom_event(app->view_dispatcher, BOOT_EVENT_CANCELLED);
+            return true;
+        }
     }
 
     view_commit_model(view, false);

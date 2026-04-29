@@ -159,13 +159,11 @@ static void rogue_ap_draw(Canvas* canvas, void* model) {
         screen_draw_centered_text(canvas, "Checking password...", 32);
 
     } else if(data->state == 1) {
-        // Waiting for password input - TextInput is shown
+        // Waiting for password input - TextInput already swapped in by the
+        // worker thread (calling it from here would deadlock on ViewModel lock).
         screen_draw_title(canvas, "Rogue AP");
         canvas_set_font(canvas, FontSecondary);
         screen_draw_centered_text(canvas, "Enter password", 32);
-        if(!data->text_input_added) {
-            rogue_ap_show_text_input(data);
-        }
 
     } else if(data->state == 2) {
         // HTML file selection
@@ -323,6 +321,10 @@ static int32_t rogue_ap_thread(void* context) {
         // Need user to enter password
         data->state = 1;
         FURI_LOG_I(TAG, "Password unknown, requesting user input");
+        // Show TextInput from worker thread (NOT from draw callback - that
+        // would deadlock on the ViewModelTypeLocking mutex while we are
+        // already inside view_get_model() in the draw call).
+        rogue_ap_show_text_input(data);
 
         // Wait for password entry
         while(!data->password_entered && !data->attack_finished) {

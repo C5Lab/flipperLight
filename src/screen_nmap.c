@@ -208,9 +208,8 @@ static void nmap_draw(Canvas* canvas, void* model) {
         screen_draw_title(canvas, "Nmap");
         canvas_set_font(canvas, FontSecondary);
         screen_draw_centered_text(canvas, "Enter password", 32);
-        if(!data->text_input_added) {
-            nmap_show_text_input(data);
-        }
+        // TextInput is added by the worker thread (calling it from draw
+        // callback would deadlock on the ViewModel mutex).
 
     } else if(data->state == 2) {
         screen_draw_title(canvas, "Nmap");

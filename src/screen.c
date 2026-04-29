@@ -104,6 +104,18 @@ void screen_pop(WiFiApp* app) {
     }
 }
 
+void screen_remove_first(WiFiApp* app) {
+    if(!app || screen_view_stack_size == 0) return;
+    ScreenStackEntry first = screen_view_stack[0];
+    for(uint8_t i = 0; i + 1 < screen_view_stack_size; i++) {
+        screen_view_stack[i] = screen_view_stack[i + 1];
+    }
+    screen_view_stack_size--;
+    view_dispatcher_remove_view(app->view_dispatcher, first.view_id);
+    if(first.cleanup) first.cleanup(first.view, first.cleanup_data);
+    if(first.view) view_free(first.view);
+}
+
 void screen_pop_to_main(WiFiApp* app) {
     // Pop all views except the first one (main menu)
     while(screen_view_stack_size > 1) {

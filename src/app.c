@@ -34,15 +34,18 @@ static bool app_custom_event_handler(void* context, uint32_t event) {
 
     switch(event) {
     case BOOT_EVENT_DONE:
-        screen_pop(app);            // pop boot screen (cleanup joins worker)
+        // Push main menu first (becomes the active view), THEN remove the
+        // boot screen from the bottom of the stack. screen_pop is a no-op
+        // when the stack has only one entry, hence the dedicated remove_first.
         app_push_main_menu(app);
+        screen_remove_first(app);
         return true;
 
     case BOOT_EVENT_CONTINUE:
         // User chose to continue without a connected board.
         app->board_connected = false;
-        screen_pop(app);
         app_push_main_menu(app);
+        screen_remove_first(app);
         return true;
 
     case BOOT_EVENT_FAILED:
@@ -52,7 +55,7 @@ static bool app_custom_event_handler(void* context, uint32_t event) {
 
     case BOOT_EVENT_CANCELLED:
         // BACK pressed during/after boot - tear down the app.
-        screen_pop(app);
+        // screen_pop_all in cleanup releases the boot view; here we just stop.
         view_dispatcher_stop(app->view_dispatcher);
         return true;
 

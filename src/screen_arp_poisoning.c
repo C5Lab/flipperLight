@@ -160,9 +160,8 @@ static void arp_poisoning_draw(Canvas* canvas, void* model) {
         screen_draw_title(canvas, "ARP Poisoning");
         canvas_set_font(canvas, FontSecondary);
         screen_draw_centered_text(canvas, "Enter password", 32);
-        if(!data->text_input_added) {
-            arp_show_text_input(data);
-        }
+        // TextInput is added by the worker thread (calling it from draw
+        // callback would deadlock on the ViewModel mutex).
 
     } else if(data->state == 2) {
         screen_draw_title(canvas, "ARP Poisoning");
@@ -344,6 +343,9 @@ static int32_t arp_poisoning_thread(void* context) {
     if(!found) {
         data->state = 1;
         FURI_LOG_I(TAG, "Password unknown, requesting user input");
+        // Show TextInput from worker thread (NOT from draw callback - that
+        // would deadlock on the ViewModelTypeLocking mutex).
+        arp_show_text_input(data);
 
         while(!data->password_entered && !data->attack_finished) {
             furi_delay_ms(100);
