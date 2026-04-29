@@ -38,10 +38,11 @@ typedef struct {
     WiFiApp* app;
     volatile bool attack_finished;
     uint8_t state;
-    // 0 = checking password (thread)
-    // 1 = waiting for password input (TextInput)
-    // 2 = select HTML file
-    // 3 = attack running
+    // 0  = checking password (thread)
+    // 1  = waiting for password input (TextInput)
+    // 2  = select HTML file
+    // 3  = attack running
+    // 10 = confirm saved password (OK=use, Right=enter new)
 
     // Network info
     char ssid[33];
@@ -65,6 +66,8 @@ typedef struct {
     TextInput* text_input;
     bool text_input_added;
     bool password_entered;
+    volatile bool password_choice_made;
+    volatile bool password_use_saved;
     View* main_view;
 } RogueApData;
 
@@ -165,6 +168,22 @@ static void rogue_ap_draw(Canvas* canvas, void* model) {
         canvas_set_font(canvas, FontSecondary);
         screen_draw_centered_text(canvas, "Enter password", 32);
 
+    } else if(data->state == 10) {
+        screen_draw_title(canvas, "Rogue AP");
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 22, "Saved password found:");
+
+        char pw_line[22];
+        size_t pw_len = strlen(data->password);
+        snprintf(pw_line, sizeof(pw_line), "%.21s", data->password);
+        canvas_draw_str(canvas, 2, 35, pw_line);
+        if(pw_len > 21) {
+            snprintf(pw_line, sizeof(pw_line), "%.21s", data->password + 21);
+            canvas_draw_str(canvas, 2, 44, pw_line);
+        }
+
+        canvas_draw_str(canvas, 2, 64, "OK:use Right:new Back");
+
     } else if(data->state == 2) {
         // HTML file selection
         screen_draw_title(canvas, "Select HTML");
@@ -258,6 +277,27 @@ static bool rogue_ap_input(InputEvent* event, void* context) {
             view_commit_model(view, false);
             return true;
         }
+    } else if(data->state == 10) {
+        if(event->key == InputKeyOk) {
+            data->password_use_saved = true;
+            data->password_choice_made = true;
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyRight) {
+            data->password[0] = '\0';
+            data->state = 1;
+            data->password_choice_made = true;
+            rogue_ap_show_text_input(data);
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyBack) {
+            data->attack_finished = true;
+            view_commit_model(view, false);
+            screen_pop(data->app);
+            return true;
+        }
     } else if(data->state == 2) {
         // HTML selection
         if(event->key == InputKeyUp) {
@@ -317,7 +357,24 @@ static int32_t rogue_ap_thread(void* context) {
 
     if(data->attack_finished) return 0;
 
-    if(!found) {
+    if(found) {
+        FURI_LOG_I(TAG, "Saved password found, awaiting user confirmation");
+        data->state = 10;
+        while(!data->password_choice_made && !data->attack_finished) {
+            furi_delay_ms(50);
+        }
+        if(data->attack_finished) return 0;
+
+        if(!data->password_use_saved) {
+            FURI_LOG_I(TAG, "User chose to enter a new password");
+            // Input handler already set state=1 and showed TextInput
+            while(!data->password_entered && !data->attack_finished) {
+                furi_delay_ms(100);
+            }
+            if(data->attack_finished) return 0;
+        }
+        data->state = 2; // proceed to HTML selection
+    } else {
         // Need user to enter password
         data->state = 1;
         FURI_LOG_I(TAG, "Password unknown, requesting user input");
@@ -331,8 +388,6 @@ static int32_t rogue_ap_thread(void* context) {
             furi_delay_ms(100);
         }
         if(data->attack_finished) return 0;
-    } else {
-        data->state = 2; // skip to HTML selection
     }
 
     // Step 3: Load HTML files
