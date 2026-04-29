@@ -154,7 +154,7 @@ static void arp_from_creds_draw(Canvas* canvas, void* model) {
             canvas_draw_str(canvas, 2, 44, pw_line);
         }
 
-        canvas_draw_str(canvas, 2, 64, "OK:use Right:new Back");
+        canvas_draw_str(canvas, 2, 62, "OK:use Right:new");
 
     } else if(data->state == 11) {
         screen_draw_title(canvas, "ARP Poisoning");
