@@ -11,6 +11,11 @@ void uart_clear_buffer(WiFiApp* app);
 bool uart_check_board_connection(WiFiApp* app);
 bool uart_check_sd_card(WiFiApp* app);
 
+// Single ping/pong attempt with a configurable timeout. Used by the boot
+// screen worker thread which retries on its own. Safe to call when
+// `app->serial` is NULL (returns false).
+bool uart_ping_once(WiFiApp* app, uint32_t timeout_ms);
+
 // CSV parsing
 bool csv_next_quoted_field(const char** p, char* out, size_t out_size);
 

@@ -15,6 +15,7 @@ App(
     sources=[
         "src/app.c",
         "src/screen.c",
+        "src/screen_boot.c",
         "src/screen_blackout.c",
         "src/screen_bluetooth.c",
         "src/screen_deauth.c",

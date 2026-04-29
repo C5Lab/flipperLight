@@ -208,6 +208,30 @@ bool uart_check_board_connection(WiFiApp* app) {
     return false;
 }
 
+bool uart_ping_once(WiFiApp* app, uint32_t timeout_ms) {
+    if(!app || !app->serial) return false;
+
+    uart_clear_buffer(app);
+    uart_send_command(app, "ping");
+
+    uint32_t deadline = furi_get_tick() + timeout_ms;
+    FuriString* line = furi_string_alloc();
+    bool got_pong = false;
+
+    while(furi_get_tick() < deadline) {
+        if(uart_read_line_internal(app, line)) {
+            const char* line_str = furi_string_get_cstr(line);
+            if(strstr(line_str, "pong")) {
+                got_pong = true;
+                break;
+            }
+        }
+    }
+
+    furi_string_free(line);
+    return got_pong;
+}
+
 //=============================================================================
 // SD Card Check
 //=============================================================================

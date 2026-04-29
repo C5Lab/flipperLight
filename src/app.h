@@ -13,6 +13,7 @@
 #include <furi_hal_serial.h>
 #include <furi_hal_serial_control.h>
 #include <furi/core/stream_buffer.h>
+#include <expansion/expansion.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -107,6 +108,11 @@ struct WiFiApp {
     CachedPassword password_cache[MAX_CACHED_PASSWORDS];
     uint8_t password_cache_count;
     bool password_cache_loaded;
+
+    // Expansion service handle. We must call expansion_disable() before acquiring
+    // USART (otherwise the expansion service races us on the same port and
+    // causes furi_check failures), and expansion_enable() on shutdown.
+    Expansion* expansion;
 };
 
 // App entry point
