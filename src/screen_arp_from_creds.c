@@ -17,13 +17,16 @@
 #include "screen_attacks.h"
 #include "uart_comm.h"
 #include "screen.h"
+#include <gui/modules/text_input.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <furi.h>
 
 #define TAG "ARPCreds"
-#define ARP_CREDS_MAX_HOSTS 32
+#define ARP_CREDS_MAX_HOSTS     32
+#define ARP_CREDS_PASSWORD_MAX  64
+#define ARP_CREDS_TEXT_INPUT_ID 995
 
 // ============================================================================
 // Data Structures
@@ -38,13 +41,15 @@ typedef struct {
     WiFiApp* app;
     volatile bool attack_finished;
     uint8_t state;
-    // 0 = connecting to WiFi
-    // 1 = scanning hosts
-    // 2 = host list display
-    // 3 = ARP poisoning active
+    // 0  = connecting to WiFi
+    // 1  = scanning hosts
+    // 2  = host list display
+    // 3  = ARP poisoning active
+    // 10 = confirm saved password (OK=use, Right=enter new)
+    // 11 = waiting for password input (TextInput)
 
     char ssid[33];
-    char password[65];
+    char password[ARP_CREDS_PASSWORD_MAX + 1];
 
     ArpCredsHostEntry hosts[ARP_CREDS_MAX_HOSTS];
     uint8_t host_count;
@@ -55,6 +60,12 @@ typedef struct {
     bool connect_failed;
 
     FuriThread* thread;
+    TextInput* text_input;
+    bool text_input_added;
+    bool password_entered;
+    volatile bool password_choice_made;
+    volatile bool password_use_saved;
+    View* main_view;
 } ArpFromCredsData;
 
 typedef struct {
@@ -76,8 +87,45 @@ void arp_from_creds_cleanup_internal(View* view, void* data) {
         furi_thread_join(d->thread);
         furi_thread_free(d->thread);
     }
+
+    if(d->text_input) {
+        if(d->text_input_added) {
+            view_dispatcher_remove_view(d->app->view_dispatcher, ARP_CREDS_TEXT_INPUT_ID);
+        }
+        text_input_free(d->text_input);
+    }
+
     free(d);
     FURI_LOG_I(TAG, "ARP from Creds cleanup complete");
+}
+
+// ============================================================================
+// TextInput callback
+// ============================================================================
+
+static void arp_creds_password_callback(void* context) {
+    ArpFromCredsData* data = (ArpFromCredsData*)context;
+    if(!data || !data->app) return;
+
+    FURI_LOG_I(TAG, "Password entered: %s", data->password);
+    password_cache_put(data->app, data->ssid, data->password);
+    data->password_entered = true;
+    data->state = 0; // proceed to connecting
+
+    uint32_t main_view_id = screen_get_current_view_id();
+    view_dispatcher_switch_to_view(data->app->view_dispatcher, main_view_id);
+}
+
+static void arp_creds_show_text_input(ArpFromCredsData* data) {
+    if(!data || !data->text_input) return;
+
+    if(!data->text_input_added) {
+        View* ti_view = text_input_get_view(data->text_input);
+        view_dispatcher_add_view(data->app->view_dispatcher, ARP_CREDS_TEXT_INPUT_ID, ti_view);
+        data->text_input_added = true;
+    }
+
+    view_dispatcher_switch_to_view(data->app->view_dispatcher, ARP_CREDS_TEXT_INPUT_ID);
 }
 
 // ============================================================================
@@ -92,7 +140,30 @@ static void arp_from_creds_draw(Canvas* canvas, void* model) {
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
 
-    if(data->state == 0) {
+    if(data->state == 10) {
+        screen_draw_title(canvas, "ARP Poisoning");
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 22, "Saved password found:");
+
+        char pw_line[22];
+        size_t pw_len = strlen(data->password);
+        snprintf(pw_line, sizeof(pw_line), "%.21s", data->password);
+        canvas_draw_str(canvas, 2, 35, pw_line);
+        if(pw_len > 21) {
+            snprintf(pw_line, sizeof(pw_line), "%.21s", data->password + 21);
+            canvas_draw_str(canvas, 2, 44, pw_line);
+        }
+
+        canvas_draw_str(canvas, 2, 62, "OK:use Right:new");
+
+    } else if(data->state == 11) {
+        screen_draw_title(canvas, "ARP Poisoning");
+        canvas_set_font(canvas, FontSecondary);
+        screen_draw_centered_text(canvas, "Enter password", 32);
+        // TextInput is added by the worker thread (calling it from draw
+        // callback would deadlock on the ViewModel mutex).
+
+    } else if(data->state == 0) {
         screen_draw_title(canvas, "ARP Poisoning");
         canvas_set_font(canvas, FontSecondary);
         char line[48];
@@ -182,7 +253,42 @@ static bool arp_from_creds_input(InputEvent* event, void* context) {
         return false;
     }
 
-    if(data->state == 0 || data->state == 1) {
+    if(data->state == 10) {
+        if(event->key == InputKeyOk) {
+            data->password_use_saved = true;
+            data->password_choice_made = true;
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyRight) {
+            data->password[0] = '\0';
+            data->state = 11;
+            data->password_choice_made = true;
+            arp_creds_show_text_input(data);
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyBack) {
+            data->attack_finished = true;
+            view_commit_model(view, false);
+            screen_pop(data->app);
+            return true;
+        }
+
+    } else if(data->state == 11) {
+        if(event->key == InputKeyOk) {
+            arp_creds_show_text_input(data);
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyBack) {
+            data->attack_finished = true;
+            view_commit_model(view, false);
+            screen_pop(data->app);
+            return true;
+        }
+
+    } else if(data->state == 0 || data->state == 1) {
         // Connecting / scanning - only back works
         if(event->key == InputKeyBack) {
             data->attack_finished = true;
@@ -242,6 +348,23 @@ static int32_t arp_from_creds_thread(void* context) {
 
     FURI_LOG_I(TAG, "Thread started for SSID: %s", data->ssid);
 
+    // Step 0: Confirm saved password (always present, came from compromised list)
+    FURI_LOG_I(TAG, "Awaiting user confirmation for saved password");
+    data->state = 10;
+    while(!data->password_choice_made && !data->attack_finished) {
+        furi_delay_ms(50);
+    }
+    if(data->attack_finished) return 0;
+
+    if(!data->password_use_saved) {
+        FURI_LOG_I(TAG, "User chose to enter a new password");
+        // Input handler already set state=11 and showed TextInput
+        while(!data->password_entered && !data->attack_finished) {
+            furi_delay_ms(100);
+        }
+        if(data->attack_finished) return 0;
+    }
+
     // Step 1: Connect to WiFi
     data->state = 0;
     char cmd[128];
@@ -295,8 +418,8 @@ static int32_t arp_from_creds_thread(void* context) {
     start = furi_get_tick();
     uint32_t last_rx = start;
 
-    while((furi_get_tick() - last_rx) < 3000 &&
-          (furi_get_tick() - start) < 20000 &&
+    while((furi_get_tick() - last_rx) < 10000 &&
+          (furi_get_tick() - start) < 30000 &&
           !data->attack_finished) {
         const char* line = uart_read_line(app, 500);
         if(line) {
@@ -308,13 +431,22 @@ static int32_t arp_from_creds_thread(void* context) {
                 continue;
             }
 
-            if(in_host_section && data->host_count < ARP_CREDS_MAX_HOSTS) {
-                // Parse "  IP  ->  MAC"
+            if(in_host_section) {
+                if(strstr(line, "========================") || strstr(line, "Found ")) {
+                    in_host_section = false;
+                    continue;
+                }
+
+                if(data->host_count >= ARP_CREDS_MAX_HOSTS) continue;
+
+                // Skip (MAC unknown) hosts - can't arp_ban without MAC
+                if(strstr(line, "(MAC unknown)")) continue;
+
+                // Parse "  IP  ->  MAC  [ARP]"
                 char ip[16] = {0};
                 char mac[18] = {0};
                 const char* arrow = strstr(line, "->");
                 if(arrow) {
-                    // Extract IP (before ->)
                     const char* p = line;
                     while(*p == ' ') p++;
                     size_t ip_len = 0;
@@ -323,7 +455,6 @@ static int32_t arp_from_creds_thread(void* context) {
                     }
                     ip[ip_len] = '\0';
 
-                    // Extract MAC (after ->)
                     p = arrow + 2;
                     while(*p == ' ') p++;
                     size_t mac_len = 0;
@@ -385,11 +516,15 @@ View* screen_arp_from_creds_create(
     memset(data, 0, sizeof(ArpFromCredsData));
     data->app = app;
     data->attack_finished = false;
-    data->state = 0;
+    data->state = 10; // start on confirm-saved-password screen
     data->host_count = 0;
     data->selected_host = 0;
     data->hosts_loaded = false;
     data->connect_failed = false;
+    data->password_entered = false;
+    data->text_input_added = false;
+    data->password_choice_made = false;
+    data->password_use_saved = false;
 
     strncpy(data->ssid, ssid, sizeof(data->ssid) - 1);
     data->ssid[sizeof(data->ssid) - 1] = '\0';
@@ -401,6 +536,7 @@ View* screen_arp_from_creds_create(
         free(data);
         return NULL;
     }
+    data->main_view = view;
 
     view_allocate_model(view, ViewModelTypeLocking, sizeof(ArpFromCredsModel));
     ArpFromCredsModel* m = view_get_model(view);
@@ -410,6 +546,20 @@ View* screen_arp_from_creds_create(
     view_set_draw_callback(view, arp_from_creds_draw);
     view_set_input_callback(view, arp_from_creds_input);
     view_set_context(view, view);
+
+    // Create TextInput for re-entering password
+    data->text_input = text_input_alloc();
+    if(data->text_input) {
+        text_input_set_header_text(data->text_input, "Enter Password:");
+        text_input_set_result_callback(
+            data->text_input,
+            arp_creds_password_callback,
+            data,
+            data->password,
+            ARP_CREDS_PASSWORD_MAX,
+            true);
+        FURI_LOG_I(TAG, "TextInput created");
+    }
 
     // Start thread
     data->thread = furi_thread_alloc();

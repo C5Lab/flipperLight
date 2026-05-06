@@ -38,10 +38,11 @@ typedef struct {
     WiFiApp* app;
     volatile bool attack_finished;
     uint8_t state;
-    // 0 = checking password (thread)
-    // 1 = waiting for password input (TextInput)
-    // 2 = select HTML file
-    // 3 = attack running
+    // 0  = checking password (thread)
+    // 1  = waiting for password input (TextInput)
+    // 2  = select HTML file
+    // 3  = attack running
+    // 10 = confirm saved password (OK=use, Right=enter new)
 
     // Network info
     char ssid[33];
@@ -65,6 +66,8 @@ typedef struct {
     TextInput* text_input;
     bool text_input_added;
     bool password_entered;
+    volatile bool password_choice_made;
+    volatile bool password_use_saved;
     View* main_view;
 } RogueApData;
 
@@ -120,6 +123,7 @@ static void rogue_ap_password_callback(void* context) {
     if(!data || !data->app) return;
 
     FURI_LOG_I(TAG, "Password entered: %s", data->password);
+    password_cache_put(data->app, data->ssid, data->password);
     data->password_entered = true;
     data->state = 2; // Move to HTML selection
 
@@ -158,13 +162,27 @@ static void rogue_ap_draw(Canvas* canvas, void* model) {
         screen_draw_centered_text(canvas, "Checking password...", 32);
 
     } else if(data->state == 1) {
-        // Waiting for password input - TextInput is shown
+        // Waiting for password input - TextInput already swapped in by the
+        // worker thread (calling it from here would deadlock on ViewModel lock).
         screen_draw_title(canvas, "Rogue AP");
         canvas_set_font(canvas, FontSecondary);
         screen_draw_centered_text(canvas, "Enter password", 32);
-        if(!data->text_input_added) {
-            rogue_ap_show_text_input(data);
+
+    } else if(data->state == 10) {
+        screen_draw_title(canvas, "Rogue AP");
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 22, "Saved password found:");
+
+        char pw_line[22];
+        size_t pw_len = strlen(data->password);
+        snprintf(pw_line, sizeof(pw_line), "%.21s", data->password);
+        canvas_draw_str(canvas, 2, 35, pw_line);
+        if(pw_len > 21) {
+            snprintf(pw_line, sizeof(pw_line), "%.21s", data->password + 21);
+            canvas_draw_str(canvas, 2, 44, pw_line);
         }
+
+        canvas_draw_str(canvas, 2, 62, "OK:use Right:new");
 
     } else if(data->state == 2) {
         // HTML file selection
@@ -259,6 +277,27 @@ static bool rogue_ap_input(InputEvent* event, void* context) {
             view_commit_model(view, false);
             return true;
         }
+    } else if(data->state == 10) {
+        if(event->key == InputKeyOk) {
+            data->password_use_saved = true;
+            data->password_choice_made = true;
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyRight) {
+            data->password[0] = '\0';
+            data->state = 1;
+            data->password_choice_made = true;
+            rogue_ap_show_text_input(data);
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyBack) {
+            data->attack_finished = true;
+            view_commit_model(view, false);
+            screen_pop(data->app);
+            return true;
+        }
     } else if(data->state == 2) {
         // HTML selection
         if(event->key == InputKeyUp) {
@@ -293,65 +332,6 @@ static bool rogue_ap_input(InputEvent* event, void* context) {
 }
 
 // ============================================================================
-// Password discovery helper
-// ============================================================================
-
-static bool rogue_ap_check_password(RogueApData* data) {
-    WiFiApp* app = data->app;
-
-    uart_clear_buffer(app);
-    uart_send_command(app, "show_pass evil");
-    furi_delay_ms(200);
-
-    uint32_t start = furi_get_tick();
-    uint32_t last_rx = start;
-
-    while((furi_get_tick() - last_rx) < 1000 &&
-          (furi_get_tick() - start) < 5000 &&
-          !data->attack_finished) {
-        const char* line = uart_read_line(app, 300);
-        if(line) {
-            last_rx = furi_get_tick();
-            FURI_LOG_I(TAG, "show_pass: %s", line);
-
-            // Parse "SSID", "password"
-            const char* p = line;
-            // Skip whitespace
-            while(*p == ' ' || *p == '\t') p++;
-            if(*p != '"') continue;
-            p++; // skip opening quote
-            const char* ssid_start = p;
-            while(*p && *p != '"') p++;
-            if(*p != '"') continue;
-            size_t ssid_len = p - ssid_start;
-            p++; // skip closing quote
-
-            // Skip separator
-            while(*p == ',' || *p == ' ' || *p == '\t') p++;
-
-            if(*p != '"') continue;
-            p++; // skip opening quote
-            const char* pass_start = p;
-            while(*p && *p != '"') p++;
-            if(*p != '"') continue;
-            size_t pass_len = p - pass_start;
-
-            // Compare SSID
-            if(ssid_len == strlen(data->ssid) &&
-               strncmp(ssid_start, data->ssid, ssid_len) == 0) {
-                if(pass_len < sizeof(data->password)) {
-                    strncpy(data->password, pass_start, pass_len);
-                    data->password[pass_len] = '\0';
-                    FURI_LOG_I(TAG, "Password found: %s", data->password);
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
-// ============================================================================
 // Attack Thread
 // ============================================================================
 
@@ -365,29 +345,49 @@ static int32_t rogue_ap_thread(void* context) {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "select_networks %lu", (unsigned long)data->net_index);
     uart_send_command(app, cmd);
-    furi_delay_ms(500);
+    furi_delay_ms(100);
     uart_clear_buffer(app);
 
     if(data->attack_finished) return 0;
 
-    // Step 2: Check if password is known
+    // Step 2: Check if password is known (cache + show_pass evil fallback)
     data->state = 0;
-    bool found = rogue_ap_check_password(data);
+    bool found = attack_resolve_password(
+        app, data->ssid, data->password, sizeof(data->password), &data->attack_finished);
 
     if(data->attack_finished) return 0;
 
-    if(!found) {
+    if(found) {
+        FURI_LOG_I(TAG, "Saved password found, awaiting user confirmation");
+        data->state = 10;
+        while(!data->password_choice_made && !data->attack_finished) {
+            furi_delay_ms(50);
+        }
+        if(data->attack_finished) return 0;
+
+        if(!data->password_use_saved) {
+            FURI_LOG_I(TAG, "User chose to enter a new password");
+            // Input handler already set state=1 and showed TextInput
+            while(!data->password_entered && !data->attack_finished) {
+                furi_delay_ms(100);
+            }
+            if(data->attack_finished) return 0;
+        }
+        data->state = 2; // proceed to HTML selection
+    } else {
         // Need user to enter password
         data->state = 1;
         FURI_LOG_I(TAG, "Password unknown, requesting user input");
+        // Show TextInput from worker thread (NOT from draw callback - that
+        // would deadlock on the ViewModelTypeLocking mutex while we are
+        // already inside view_get_model() in the draw call).
+        rogue_ap_show_text_input(data);
 
         // Wait for password entry
         while(!data->password_entered && !data->attack_finished) {
             furi_delay_ms(100);
         }
         if(data->attack_finished) return 0;
-    } else {
-        data->state = 2; // skip to HTML selection
     }
 
     // Step 3: Load HTML files
@@ -499,6 +499,7 @@ static int32_t rogue_ap_thread(void* context) {
                             strncpy(data->last_password, colon, sizeof(data->last_password) - 1);
                             data->last_password[sizeof(data->last_password) - 1] = '\0';
                             FURI_LOG_I(TAG, "Password captured: %s", data->last_password);
+                            password_cache_put(app, data->ssid, data->last_password);
                         }
                     }
                 }

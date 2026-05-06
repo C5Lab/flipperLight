@@ -15,6 +15,7 @@ App(
     sources=[
         "src/app.c",
         "src/screen.c",
+        "src/screen_boot.c",
         "src/screen_blackout.c",
         "src/screen_bluetooth.c",
         "src/screen_deauth.c",
@@ -45,6 +46,7 @@ App(
         "src/screen_deauth_client.c",
         "src/screen_arp_from_creds.c",
         "src/screen_mitm_pcap.c",
+        "src/screen_nmap.c",
         "src/screen_beacon_spam.c",
         "src/uart_comm.c",
     ],

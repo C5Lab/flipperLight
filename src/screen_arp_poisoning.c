@@ -44,12 +44,13 @@ typedef struct {
     WiFiApp* app;
     volatile bool attack_finished;
     uint8_t state;
-    // 0 = checking password (thread)
-    // 1 = waiting for password input (TextInput)
-    // 2 = connecting to WiFi
-    // 3 = scanning hosts
-    // 4 = host list display
-    // 5 = ARP poisoning active
+    // 0  = checking password (thread)
+    // 1  = waiting for password input (TextInput)
+    // 2  = connecting to WiFi
+    // 3  = scanning hosts
+    // 4  = host list display
+    // 5  = ARP poisoning active
+    // 10 = confirm saved password (OK=use, Right=enter new)
 
     // Network info
     char ssid[33];
@@ -71,6 +72,8 @@ typedef struct {
     TextInput* text_input;
     bool text_input_added;
     bool password_entered;
+    volatile bool password_choice_made;
+    volatile bool password_use_saved;
     View* main_view;
 } ArpPoisoningData;
 
@@ -119,6 +122,7 @@ static void arp_password_callback(void* context) {
     if(!data || !data->app) return;
 
     FURI_LOG_I(TAG, "Password entered: %s", data->password);
+    password_cache_put(data->app, data->ssid, data->password);
     data->password_entered = true;
     data->state = 2; // Move to connecting
 
@@ -159,9 +163,24 @@ static void arp_poisoning_draw(Canvas* canvas, void* model) {
         screen_draw_title(canvas, "ARP Poisoning");
         canvas_set_font(canvas, FontSecondary);
         screen_draw_centered_text(canvas, "Enter password", 32);
-        if(!data->text_input_added) {
-            arp_show_text_input(data);
+        // TextInput is added by the worker thread (calling it from draw
+        // callback would deadlock on the ViewModel mutex).
+
+    } else if(data->state == 10) {
+        screen_draw_title(canvas, "ARP Poisoning");
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 22, "Saved password found:");
+
+        char pw_line[22];
+        size_t pw_len = strlen(data->password);
+        snprintf(pw_line, sizeof(pw_line), "%.21s", data->password);
+        canvas_draw_str(canvas, 2, 35, pw_line);
+        if(pw_len > 21) {
+            snprintf(pw_line, sizeof(pw_line), "%.21s", data->password + 21);
+            canvas_draw_str(canvas, 2, 44, pw_line);
         }
+
+        canvas_draw_str(canvas, 2, 62, "OK:use Right:new");
 
     } else if(data->state == 2) {
         screen_draw_title(canvas, "ARP Poisoning");
@@ -264,6 +283,29 @@ static bool arp_poisoning_input(InputEvent* event, void* context) {
             return true;
         }
 
+    } else if(data->state == 10) {
+        if(event->key == InputKeyOk) {
+            data->password_use_saved = true;
+            data->password_choice_made = true;
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyRight) {
+            data->password[0] = '\0';
+            data->state = 1;
+            data->password_choice_made = true;
+            arp_show_text_input(data);
+            view_commit_model(view, false);
+            return true;
+        }
+        if(event->key == InputKeyBack) {
+            data->attack_finished = true;
+            uart_send_command(data->app, "stop");
+            view_commit_model(view, false);
+            screen_pop(data->app);
+            return true;
+        }
+
     } else if(data->state == 2 || data->state == 3) {
         // Connecting / scanning - only back works
         if(event->key == InputKeyBack) {
@@ -315,62 +357,6 @@ static bool arp_poisoning_input(InputEvent* event, void* context) {
 }
 
 // ============================================================================
-// Password discovery helper
-// ============================================================================
-
-static bool arp_check_password(ArpPoisoningData* data) {
-    WiFiApp* app = data->app;
-
-    uart_clear_buffer(app);
-    uart_send_command(app, "show_pass evil");
-    furi_delay_ms(200);
-
-    uint32_t start = furi_get_tick();
-    uint32_t last_rx = start;
-
-    while((furi_get_tick() - last_rx) < 1000 &&
-          (furi_get_tick() - start) < 5000 &&
-          !data->attack_finished) {
-        const char* line = uart_read_line(app, 300);
-        if(line) {
-            last_rx = furi_get_tick();
-            FURI_LOG_I(TAG, "show_pass: %s", line);
-
-            // Parse "SSID", "password"
-            const char* p = line;
-            while(*p == ' ' || *p == '\t') p++;
-            if(*p != '"') continue;
-            p++;
-            const char* ssid_start = p;
-            while(*p && *p != '"') p++;
-            if(*p != '"') continue;
-            size_t ssid_len = p - ssid_start;
-            p++;
-
-            while(*p == ',' || *p == ' ' || *p == '\t') p++;
-
-            if(*p != '"') continue;
-            p++;
-            const char* pass_start = p;
-            while(*p && *p != '"') p++;
-            if(*p != '"') continue;
-            size_t pass_len = p - pass_start;
-
-            if(ssid_len == strlen(data->ssid) &&
-               strncmp(ssid_start, data->ssid, ssid_len) == 0) {
-                if(pass_len < sizeof(data->password)) {
-                    strncpy(data->password, pass_start, pass_len);
-                    data->password[pass_len] = '\0';
-                    FURI_LOG_I(TAG, "Password found: %s", data->password);
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
-// ============================================================================
 // Attack Thread
 // ============================================================================
 
@@ -384,27 +370,45 @@ static int32_t arp_poisoning_thread(void* context) {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "select_networks %lu", (unsigned long)data->net_index);
     uart_send_command(app, cmd);
-    furi_delay_ms(500);
+    furi_delay_ms(100);
     uart_clear_buffer(app);
 
     if(data->attack_finished) return 0;
 
-    // Step 2: Check if password is known
+    // Step 2: Check if password is known (cache + show_pass evil fallback)
     data->state = 0;
-    bool found = arp_check_password(data);
+    bool found = attack_resolve_password(
+        app, data->ssid, data->password, sizeof(data->password), &data->attack_finished);
 
     if(data->attack_finished) return 0;
 
-    if(!found) {
+    if(found) {
+        FURI_LOG_I(TAG, "Saved password found, awaiting user confirmation");
+        data->state = 10;
+        while(!data->password_choice_made && !data->attack_finished) {
+            furi_delay_ms(50);
+        }
+        if(data->attack_finished) return 0;
+
+        if(!data->password_use_saved) {
+            FURI_LOG_I(TAG, "User chose to enter a new password");
+            // Input handler already set state=1 and showed TextInput
+            while(!data->password_entered && !data->attack_finished) {
+                furi_delay_ms(100);
+            }
+            if(data->attack_finished) return 0;
+        }
+    } else {
         data->state = 1;
         FURI_LOG_I(TAG, "Password unknown, requesting user input");
+        // Show TextInput from worker thread (NOT from draw callback - that
+        // would deadlock on the ViewModelTypeLocking mutex).
+        arp_show_text_input(data);
 
         while(!data->password_entered && !data->attack_finished) {
             furi_delay_ms(100);
         }
         if(data->attack_finished) return 0;
-    } else {
-        data->state = 2;
     }
 
     // Step 3: Connect to WiFi
@@ -459,8 +463,8 @@ static int32_t arp_poisoning_thread(void* context) {
     start = furi_get_tick();
     uint32_t last_rx = start;
 
-    while((furi_get_tick() - last_rx) < 3000 &&
-          (furi_get_tick() - start) < 20000 &&
+    while((furi_get_tick() - last_rx) < 10000 &&
+          (furi_get_tick() - start) < 30000 &&
           !data->attack_finished) {
         const char* line = uart_read_line(app, 500);
         if(line) {
@@ -472,13 +476,22 @@ static int32_t arp_poisoning_thread(void* context) {
                 continue;
             }
 
-            if(in_host_section && data->host_count < ARP_MAX_HOSTS) {
-                // Parse "  IP  ->  MAC"
+            if(in_host_section) {
+                if(strstr(line, "========================") || strstr(line, "Found ")) {
+                    in_host_section = false;
+                    continue;
+                }
+
+                if(data->host_count >= ARP_MAX_HOSTS) continue;
+
+                // Skip (MAC unknown) hosts - can't arp_ban without MAC
+                if(strstr(line, "(MAC unknown)")) continue;
+
+                // Parse "  IP  ->  MAC  [ARP]"
                 char ip[16] = {0};
                 char mac[18] = {0};
                 const char* arrow = strstr(line, "->");
                 if(arrow) {
-                    // Extract IP (before ->)
                     const char* p = line;
                     while(*p == ' ') p++;
                     size_t ip_len = 0;
@@ -487,7 +500,6 @@ static int32_t arp_poisoning_thread(void* context) {
                     }
                     ip[ip_len] = '\0';
 
-                    // Extract MAC (after ->)
                     p = arrow + 2;
                     while(*p == ' ') p++;
                     size_t mac_len = 0;

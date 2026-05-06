@@ -14,6 +14,8 @@ void screen_push_with_cleanup(WiFiApp* app, View* view, void (*cleanup)(View*, v
 void screen_pop(WiFiApp* app);
 void screen_pop_to_main(WiFiApp* app);
 void screen_pop_all(WiFiApp* app);
+// Remove the bottom-most entry from the stack (e.g. boot screen after success).
+void screen_remove_first(WiFiApp* app);
 
 // Helper drawing functions
 void screen_draw_title(Canvas* canvas, const char* title);
