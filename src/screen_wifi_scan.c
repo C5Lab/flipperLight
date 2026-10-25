@@ -283,8 +283,10 @@ static bool wifi_scan_input(InputEvent* event, void* context) {
             app->selected_networks[app->selected_count++] = net_idx;
         }
     } else if(event->key == InputKeyRight) {
-        // Proceed to attack selection if networks are selected
+        // Confirm the checked networks before any attack. JanOS keeps this
+        // selection, and start_sniffer then stays on those channels.
         if(app->selected_count > 0) {
+            uart_send_select_networks(app);
             view_commit_model(view, true);
             View* attack_screen = screen_attack_selection_create(app);
             if(attack_screen) {

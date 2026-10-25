@@ -2,11 +2,8 @@
  * Deauth Single Client Screen
  *
  * Deauthenticates a single client from a specific network.
- * Flow:
- *   1. select_networks <net_index>
- *   2. select_stations <MAC>
- *   3. start_deauth
- *   Back -> stop, return to main menu
+ * Overlay shown after start_deauth_station is ACKed (station_started=true).
+ * Back -> stop, return to main menu
  *
  * Memory lifecycle:
  * - screen_deauth_client_create(): Allocates DeauthClientData, thread, view
@@ -33,7 +30,8 @@ typedef struct {
     char mac[18];
     char ssid[33];
     uint8_t channel;
-    uint8_t net_index; // 1-based ordinal position of network in sniffer results
+    uint8_t net_index; // unused when station_started
+    bool station_started;
     FuriThread* thread;
 } DeauthClientData;
 
@@ -129,31 +127,10 @@ static int32_t deauth_client_thread(void* context) {
     furi_delay_ms(200);
     uart_clear_buffer(app);
 
-    // Step 1: select_networks (skip if net_index == 0, already selected)
-    char cmd[128];
-    if(data->net_index > 0) {
-        snprintf(cmd, sizeof(cmd), "select_networks %u", data->net_index);
-        FURI_LOG_I(TAG, "Sending: %s", cmd);
-        uart_send_command(app, cmd);
-        furi_delay_ms(500);
-
-        if(data->attack_finished) return 0;
-
-        uart_clear_buffer(app);
+    if(!data->station_started) {
+        FURI_LOG_W(TAG, "Deauth client overlay requires an ACKed station start");
+        return 0;
     }
-
-    // Step 2: select_stations
-    snprintf(cmd, sizeof(cmd), "select_stations %s", data->mac);
-    FURI_LOG_I(TAG, "Sending: %s", cmd);
-    uart_send_command(app, cmd);
-    furi_delay_ms(500);
-
-    if(data->attack_finished) return 0;
-
-    // Step 3: start_deauth
-    uart_clear_buffer(app);
-    FURI_LOG_I(TAG, "Sending: start_deauth");
-    uart_send_command(app, "start_deauth");
 
     // Monitor until stopped
     while(!data->attack_finished) {
@@ -181,6 +158,7 @@ View* screen_deauth_client_create(
     const char* mac,
     const char* ssid,
     uint8_t channel,
+    bool station_started,
     void** out_data) {
 
     FURI_LOG_I(TAG, "Creating Deauth Client screen: MAC=%s SSID=%s CH=%u idx=%u",
@@ -193,6 +171,7 @@ View* screen_deauth_client_create(
     data->app = app;
     data->attack_finished = false;
     data->net_index = net_index;
+    data->station_started = station_started;
     data->channel = channel;
 
     strncpy(data->mac, mac, sizeof(data->mac) - 1);
@@ -218,7 +197,7 @@ View* screen_deauth_client_create(
     // Start thread
     data->thread = furi_thread_alloc();
     furi_thread_set_name(data->thread, "DeauthCli");
-    furi_thread_set_stack_size(data->thread, 2048);
+    furi_thread_set_stack_size(data->thread, 4096);
     furi_thread_set_callback(data->thread, deauth_client_thread);
     furi_thread_set_context(data->thread, data);
     furi_thread_start(data->thread);

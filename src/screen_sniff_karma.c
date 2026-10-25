@@ -12,6 +12,7 @@
 #include "screen_attacks.h"
 #include "uart_comm.h"
 #include "screen.h"
+#include "sniffer_clients_host.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -149,25 +150,56 @@ View* screen_sniff_karma_menu_create(WiFiApp* app) {
 #define MAX_SNIFFER_RESULTS 20
 #define MAX_SNIFFER_PROBES 20
 
+#define GSNIFF_JOB_NONE 0
+#define GSNIFF_JOB_CLIENTS 1
+#define GSNIFF_JOB_PROBES 2
+#define GSNIFF_JOB_RESUME_LIST 3
+#define GSNIFF_JOB_RESUME_PROBES 4
+
 typedef struct {
     WiFiApp* app;
     volatile bool running;
     volatile bool attack_finished;
+    volatile uint8_t job;
+    volatile bool list_busy;
+    volatile bool gui_rx;
+    volatile bool rx_idle;
     uint8_t display_mode;  // 0=counter, 1=results, 2=probes
     uint32_t packet_count;
-    char results[MAX_SNIFFER_RESULTS][64];
-    uint8_t results_count;
+    JsSession js;
+    volatile bool clients_loaded;
+    unsigned selected_client;
+    unsigned client_scroll;
     char probes[MAX_SNIFFER_PROBES][64];
     uint8_t probes_count;
     uint8_t scroll_offset;
     uint8_t selected_result;
     uint8_t selected_probe;
+    View* view;
     FuriThread* thread;
 } GlobalSnifferData;
 
 typedef struct {
     GlobalSnifferData* data;
 } GlobalSnifferModel;
+
+static void global_sniffer_refresh(GlobalSnifferData* data) {
+    if(!data || !data->view) return;
+    with_view_model(data->view, GlobalSnifferModel* model, { UNUSED(model); }, true);
+}
+
+static void global_sniffer_release_clients(GlobalSnifferData* data) {
+    if(data->view) {
+        with_view_model(data->view, GlobalSnifferModel* model, {
+            UNUSED(model);
+            js_free(&data->js);
+            data->clients_loaded = false;
+        }, false);
+    } else {
+        js_free(&data->js);
+        data->clients_loaded = false;
+    }
+}
 
 static void global_sniffer_cleanup(View* view, void* data) {
     UNUSED(view);
@@ -180,27 +212,26 @@ static void global_sniffer_cleanup(View* view, void* data) {
         furi_thread_join(d->thread);
         furi_thread_free(d->thread);
     }
+    js_free(&d->js);
     free(d);
 }
 
 static void global_sniffer_load_results(GlobalSnifferData* data) {
-    uart_clear_buffer(data->app);
-    uart_send_command(data->app, "show_sniffer_results");
-    furi_delay_ms(100);
-    
-    data->results_count = 0;
-    data->scroll_offset = 0;
-    data->selected_result = 0;
-    
-    uint32_t start = furi_get_tick();
-    while((furi_get_tick() - start) < 2000 && data->results_count < MAX_SNIFFER_RESULTS) {
-        const char* line = uart_read_line(data->app, 200);
-        if(line && line[0] && !strstr(line, "No APs") && !strstr(line, "show_sniffer")) {
-            strncpy(data->results[data->results_count], line, 63);
-            data->results[data->results_count][63] = '\0';
-            data->results_count++;
-        }
+    WiFiApp* app = data->app;
+    uart_clear_buffer(app);
+    js_free(&data->js);
+    js_init(&data->js, fl_js_send, app);
+    data->client_scroll = 0;
+    data->selected_client = 0;
+    data->clients_loaded = js_load(&data->js, fl_now_ms());
+    while(data->clients_loaded && data->js.phase == JS_LOADING &&
+          data->job == GSNIFF_JOB_NONE && !data->gui_rx && !data->attack_finished) {
+        const char* line = uart_read_line(app, 200);
+        uint32_t now = fl_now_ms();
+        if(line) js_line(&data->js, line, now);
+        js_tick(&data->js, now);
     }
+    data->clients_loaded = (data->js.phase == JS_READY);
 }
 
 static void global_sniffer_load_probes(GlobalSnifferData* data) {
@@ -213,7 +244,8 @@ static void global_sniffer_load_probes(GlobalSnifferData* data) {
     data->selected_probe = 0;
     
     uint32_t start = furi_get_tick();
-    while((furi_get_tick() - start) < 2000 && data->probes_count < MAX_SNIFFER_PROBES) {
+    while(!data->attack_finished && data->job == GSNIFF_JOB_NONE && !data->gui_rx &&
+          (furi_get_tick() - start) < 2000 && data->probes_count < MAX_SNIFFER_PROBES) {
         const char* line = uart_read_line(data->app, 200);
         if(line && line[0] && !strstr(line, "Probe requests") && !strstr(line, "show_probes")) {
             strncpy(data->probes[data->probes_count], line, 63);
@@ -243,37 +275,28 @@ static void global_sniffer_draw(Canvas* canvas, void* model) {
         canvas_set_font(canvas, FontSecondary);
         screen_draw_centered_text(canvas, "L:Results  R:Probes", 62);
     } else if(data->display_mode == 1) {
-        screen_draw_title(canvas, "Results");
-        canvas_set_font(canvas, FontSecondary);
-        
-        if(data->results_count == 0) {
-            screen_draw_centered_text(canvas, "No APs found", 32);
+        screen_draw_title(canvas, "Clients");
+        if(data->list_busy) {
+            canvas_set_font(canvas, FontSecondary);
+            screen_draw_centered_text(canvas, "Loading...", 32);
         } else {
-            uint8_t y = 21;
-            uint8_t max_visible = 5;
-            
-            // Adjust scroll for selection
-            if(data->selected_result >= data->scroll_offset + max_visible) {
-                data->scroll_offset = data->selected_result - max_visible + 1;
-            } else if(data->selected_result < data->scroll_offset) {
-                data->scroll_offset = data->selected_result;
-            }
-            
-            for(uint8_t i = data->scroll_offset; i < data->results_count && (i - data->scroll_offset) < max_visible; i++) {
-                uint8_t display_y = y + ((i - data->scroll_offset) * 9);
-                if(i == data->selected_result) {
-                    canvas_draw_box(canvas, 0, display_y - 7, 128, 9);
-                    canvas_set_color(canvas, ColorWhite);
-                }
-                canvas_draw_str(canvas, 2, display_y, data->results[i]);
-                canvas_set_color(canvas, ColorBlack);
-            }
+            fl_draw_client_rows(
+                canvas,
+                data->clients_loaded ? &data->js.model : NULL,
+                data->selected_client,
+                &data->client_scroll,
+                data->js.error);
         }
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 62, "<Back");
+        canvas_draw_str(canvas, 76, 62, "OK:Deauth");
     } else {
         screen_draw_title(canvas, "Probes");
         canvas_set_font(canvas, FontSecondary);
         
-        if(data->probes_count == 0) {
+        if(data->list_busy) {
+            screen_draw_centered_text(canvas, "Loading...", 32);
+        } else if(data->probes_count == 0) {
             screen_draw_centered_text(canvas, "No probe requests", 32);
         } else {
             uint8_t y = 21;
@@ -318,19 +341,26 @@ static bool global_sniffer_input(InputEvent* event, void* context) {
     if(data->display_mode == 0) {
         // Counter mode
         if(event->key == InputKeyLeft) {
-            // Show Results
+            if(data->job != GSNIFF_JOB_NONE) {
+                view_commit_model(view, false);
+                return true;
+            }
             data->running = false;
-            uart_send_command(data->app, "stop");
-            furi_delay_ms(200);
-            global_sniffer_load_results(data);
+            data->clients_loaded = false;
+            data->js.error[0] = 0;
+            data->selected_client = 0;
             data->display_mode = 1;
+            data->job = GSNIFF_JOB_CLIENTS;
         } else if(event->key == InputKeyRight) {
-            // Show Probes
+            if(data->job != GSNIFF_JOB_NONE) {
+                view_commit_model(view, false);
+                return true;
+            }
             data->running = false;
-            uart_send_command(data->app, "stop");
-            furi_delay_ms(200);
-            global_sniffer_load_probes(data);
+            data->probes_count = 0;
+            data->selected_probe = 0;
             data->display_mode = 2;
+            data->job = GSNIFF_JOB_PROBES;
         } else if(event->key == InputKeyBack) {
             data->attack_finished = true;
             data->running = false;
@@ -340,17 +370,49 @@ static bool global_sniffer_input(InputEvent* event, void* context) {
             return true;
         }
     } else if(data->display_mode == 1) {
-        // Results mode
+        unsigned client_count = data->clients_loaded ? data->js.model.client_count : 0;
         if(event->key == InputKeyUp) {
-            if(data->selected_result > 0) data->selected_result--;
+            if(data->selected_client > 0) data->selected_client--;
         } else if(event->key == InputKeyDown) {
-            if(data->selected_result + 1 < data->results_count) data->selected_result++;
+            if(data->selected_client + 1 < client_count) data->selected_client++;
+        } else if(event->key == InputKeyOk) {
+            if(data->list_busy || data->job != GSNIFF_JOB_NONE) {
+                view_commit_model(view, false);
+                return true;
+            }
+            if(data->clients_loaded && data->selected_client < client_count) {
+                const sc_client_t* client = &data->js.model.clients[data->selected_client];
+                const sc_ap_t* ap = &data->js.model.aps[client->ap];
+                char mac[18];
+                char ssid[33];
+                uint8_t channel = ap->channel;
+                sc_mac_text(mac, client->mac);
+                sc_ap_label(ap, ssid, sizeof(ssid));
+                data->gui_rx = true;
+                view_commit_model(view, false);
+                uint32_t wait_start = furi_get_tick();
+                while(!data->rx_idle && (furi_get_tick() - wait_start) < 400) {
+                    furi_delay_ms(10);
+                }
+                bool started = fl_js_pump_start(&data->js, data->app, data->selected_client);
+                data->gui_rx = false;
+                if(started) {
+                    WiFiApp* app = data->app;
+                    void* deauth_data = NULL;
+                    View* next = screen_deauth_client_create(
+                        app, 0, mac, ssid, channel, true, &deauth_data);
+                    if(next) {
+                        screen_push_with_cleanup(app, next, deauth_client_cleanup_internal, deauth_data);
+                    }
+                    return true;
+                }
+                global_sniffer_refresh(data);
+                return true;
+            }
         } else if(event->key == InputKeyBack || event->key == InputKeyLeft) {
-            // Return to counter and restart sniffer
             data->display_mode = 0;
-            data->selected_result = 0;
-            data->running = true;
-            uart_send_command(data->app, "start_sniffer");
+            data->selected_client = 0;
+            data->job = GSNIFF_JOB_RESUME_LIST;
         }
     } else {
         // Probes mode
@@ -387,13 +449,52 @@ static bool global_sniffer_input(InputEvent* event, void* context) {
         } else if(event->key == InputKeyBack || event->key == InputKeyLeft) {
             data->display_mode = 0;
             data->selected_probe = 0;
-            data->running = true;
-            uart_send_command(data->app, "start_sniffer");
+            data->job = GSNIFF_JOB_RESUME_PROBES;
         }
     }
     
     view_commit_model(view, true);
     return true;
+}
+
+static void global_sniffer_run_job(GlobalSnifferData* data, uint8_t job) {
+    WiFiApp* app = data->app;
+    data->running = false;
+    data->list_busy = true;
+
+    if(job == GSNIFF_JOB_CLIENTS) {
+        global_sniffer_load_results(data);
+        if(data->job == GSNIFF_JOB_NONE && !data->attack_finished) {
+            data->display_mode = 1;
+        }
+    } else if(job == GSNIFF_JOB_PROBES) {
+        uart_send_command(app, "stop");
+        furi_delay_ms(200);
+        global_sniffer_load_probes(data);
+        if(data->job == GSNIFF_JOB_NONE && !data->attack_finished) {
+            data->display_mode = 2;
+        }
+    } else if(job == GSNIFF_JOB_RESUME_LIST) {
+        global_sniffer_release_clients(data);
+        uart_clear_buffer(app);
+        uart_send_command(app, "unselect_networks");
+        furi_delay_ms(50);
+        uart_send_command(app, "start_sniffer_noscan");
+        data->running = true;
+        if(data->job == GSNIFF_JOB_NONE && !data->attack_finished) {
+            data->display_mode = 0;
+        }
+    } else if(job == GSNIFF_JOB_RESUME_PROBES) {
+        uart_clear_buffer(app);
+        uart_send_command(app, "start_sniffer");
+        data->running = true;
+        if(data->job == GSNIFF_JOB_NONE && !data->attack_finished) {
+            data->display_mode = 0;
+        }
+    }
+
+    data->list_busy = false;
+    global_sniffer_refresh(data);
 }
 
 static int32_t global_sniffer_thread(void* context) {
@@ -402,28 +503,49 @@ static int32_t global_sniffer_thread(void* context) {
     
     furi_delay_ms(200);
     uart_clear_buffer(app);
-    
-    // No select_networks - just start sniffer
+
+    uart_send_command(app, "unselect_networks");
+    furi_delay_ms(50);
     uart_send_command(app, "start_sniffer");
     data->running = true;
     
     while(!data->attack_finished) {
-        if(!data->running) {
-            furi_delay_ms(100);
+        if(data->gui_rx) {
+            data->rx_idle = true;
+            furi_delay_ms(10);
             continue;
         }
-        
-        const char* line = uart_read_line(app, 300);
-        if(line) {
-            // Parse "Sniffer packet count: N"
-            const char* marker = strstr(line, "Sniffer packet count:");
-            if(marker) {
-                marker += 22;
-                while(*marker == ' ') marker++;
-                data->packet_count = (uint32_t)strtol(marker, NULL, 10);
-            }
+
+        uint8_t job = data->job;
+        if(job != GSNIFF_JOB_NONE) {
+            data->rx_idle = false;
+            data->job = GSNIFF_JOB_NONE;
+            global_sniffer_run_job(data, job);
+            continue;
         }
-        furi_delay_ms(50);
+
+        data->rx_idle = false;
+        if(data->running) {
+            const char* line = uart_read_line(app, 100);
+            if(line && data->running && data->job == GSNIFF_JOB_NONE && !data->gui_rx) {
+                const char* marker = strstr(line, "Sniffer packet count:");
+                if(marker) {
+                    marker += 22;
+                    while(*marker == ' ') marker++;
+                    uint32_t count = (uint32_t)strtol(marker, NULL, 10);
+                    if(count != data->packet_count) {
+                        data->packet_count = count;
+                        global_sniffer_refresh(data);
+                    }
+                }
+            }
+        } else if(data->display_mode == 1) {
+            const char* line = uart_read_line(app, 100);
+            UNUSED(line);
+        } else {
+            data->rx_idle = true;
+            furi_delay_ms(20);
+        }
     }
     
     return 0;
@@ -454,10 +576,11 @@ static View* global_sniffer_screen_create(WiFiApp* app, void** out_data) {
     view_set_draw_callback(view, global_sniffer_draw);
     view_set_input_callback(view, global_sniffer_input);
     view_set_context(view, view);
+    data->view = view;
     
     data->thread = furi_thread_alloc();
     furi_thread_set_name(data->thread, "GSniffer");
-    furi_thread_set_stack_size(data->thread, 2048);
+    furi_thread_set_stack_size(data->thread, 6144);
     furi_thread_set_callback(data->thread, global_sniffer_thread);
     furi_thread_set_context(data->thread, data);
     furi_thread_start(data->thread);
@@ -467,16 +590,17 @@ static View* global_sniffer_screen_create(WiFiApp* app, void** out_data) {
 }
 
 // ============================================================================
-// Browse Clients - Shows client list from show_sniffer_results
+// Browse Clients - snapshot from show_sniffer_clients
 // ============================================================================
 
 typedef struct {
     WiFiApp* app;
-    char clients[MAX_SNIFFER_RESULTS][64];
-    uint8_t client_count;
-    uint8_t selected;
-    uint8_t scroll_offset;
+    JsSession js;
+    unsigned selected;
+    unsigned scroll_offset;
     bool loaded;
+    FuriThread* thread;
+    volatile bool cancel;
 } BrowseClientsData;
 
 typedef struct {
@@ -485,7 +609,37 @@ typedef struct {
 
 static void browse_clients_cleanup(View* view, void* data) {
     UNUSED(view);
-    if(data) free(data);
+    BrowseClientsData* d = (BrowseClientsData*)data;
+    if(!d) return;
+    d->cancel = true;
+    if(d->thread) {
+        furi_thread_join(d->thread);
+        furi_thread_free(d->thread);
+    }
+    js_free(&d->js);
+    free(d);
+}
+
+static int32_t browse_clients_thread(void* context) {
+    BrowseClientsData* data = (BrowseClientsData*)context;
+    uart_clear_buffer(data->app);
+    js_init(&data->js, fl_js_send, data->app);
+    if(data->cancel) {
+        data->loaded = true;
+        return 0;
+    }
+    if(!js_load(&data->js, fl_now_ms())) {
+        data->loaded = true;
+        return 0;
+    }
+    while(!data->cancel && data->js.phase == JS_LOADING) {
+        const char* line = uart_read_line(data->app, 200);
+        uint32_t now = fl_now_ms();
+        if(line) js_line(&data->js, line, now);
+        js_tick(&data->js, now);
+    }
+    data->loaded = true;
+    return 0;
 }
 
 static void browse_clients_draw(Canvas* canvas, void* model) {
@@ -496,35 +650,23 @@ static void browse_clients_draw(Canvas* canvas, void* model) {
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
     screen_draw_title(canvas, "Clients");
-    canvas_set_font(canvas, FontSecondary);
     
     if(!data->loaded) {
+        canvas_set_font(canvas, FontSecondary);
         screen_draw_centered_text(canvas, "Loading...", 32);
         return;
     }
     
-    if(data->client_count == 0) {
-        screen_draw_centered_text(canvas, "No clients found", 32);
-        return;
-    }
-    
-    uint8_t y = 21;
-    uint8_t max_visible = 5;
-    
-    if(data->selected >= data->scroll_offset + max_visible) {
-        data->scroll_offset = data->selected - max_visible + 1;
-    } else if(data->selected < data->scroll_offset) {
-        data->scroll_offset = data->selected;
-    }
-    
-    for(uint8_t i = data->scroll_offset; i < data->client_count && (i - data->scroll_offset) < max_visible; i++) {
-        uint8_t display_y = y + ((i - data->scroll_offset) * 9);
-        if(i == data->selected) {
-            canvas_draw_box(canvas, 0, display_y - 7, 128, 9);
-            canvas_set_color(canvas, ColorWhite);
-        }
-        canvas_draw_str(canvas, 2, display_y, data->clients[i]);
-        canvas_set_color(canvas, ColorBlack);
+    fl_draw_client_rows(
+        canvas,
+        &data->js.model,
+        data->selected,
+        &data->scroll_offset,
+        data->js.error);
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 2, 62, "<Back");
+    if(data->js.phase == JS_READY && data->js.model.client_count > 0) {
+        canvas_draw_str(canvas, 76, 62, "OK:Deauth");
     }
 }
 
@@ -544,10 +686,32 @@ static bool browse_clients_input(InputEvent* event, void* context) {
         return false;
     }
     
+    unsigned client_count = (data->loaded && data->js.phase == JS_READY) ? data->js.model.client_count : 0;
+    
     if(event->key == InputKeyUp) {
         if(data->selected > 0) data->selected--;
     } else if(event->key == InputKeyDown) {
-        if(data->selected + 1 < data->client_count) data->selected++;
+        if(data->selected + 1 < client_count) data->selected++;
+    } else if(event->key == InputKeyOk) {
+        if(data->loaded && data->selected < client_count) {
+            const sc_client_t* client = &data->js.model.clients[data->selected];
+            const sc_ap_t* ap = &data->js.model.aps[client->ap];
+            char mac[18];
+            char ssid[33];
+            sc_mac_text(mac, client->mac);
+            sc_ap_label(ap, ssid, sizeof(ssid));
+            if(fl_js_pump_start(&data->js, data->app, data->selected)) {
+                WiFiApp* app = data->app;
+                view_commit_model(view, false);
+                void* deauth_data = NULL;
+                View* next = screen_deauth_client_create(
+                    app, 0, mac, ssid, ap->channel, true, &deauth_data);
+                if(next) {
+                    screen_push_with_cleanup(app, next, deauth_client_cleanup_internal, deauth_data);
+                }
+                return true;
+            }
+        }
     } else if(event->key == InputKeyBack) {
         view_commit_model(view, false);
         screen_pop(data->app);
@@ -581,21 +745,12 @@ static View* browse_clients_screen_create(WiFiApp* app, void** out_data) {
     view_set_input_callback(view, browse_clients_input);
     view_set_context(view, view);
     
-    // Load clients synchronously
-    uart_clear_buffer(app);
-    uart_send_command(app, "show_sniffer_results");
-    furi_delay_ms(100);
-    
-    uint32_t start = furi_get_tick();
-    while((furi_get_tick() - start) < 2000 && data->client_count < MAX_SNIFFER_RESULTS) {
-        const char* line = uart_read_line(app, 200);
-        if(line && line[0] && !strstr(line, "No APs") && !strstr(line, "show_sniffer")) {
-            strncpy(data->clients[data->client_count], line, 63);
-            data->clients[data->client_count][63] = '\0';
-            data->client_count++;
-        }
-    }
-    data->loaded = true;
+    data->thread = furi_thread_alloc();
+    furi_thread_set_name(data->thread, "BClients");
+    furi_thread_set_stack_size(data->thread, 4096);
+    furi_thread_set_callback(data->thread, browse_clients_thread);
+    furi_thread_set_context(data->thread, data);
+    furi_thread_start(data->thread);
     
     if(out_data) *out_data = data;
     return view;

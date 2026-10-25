@@ -6,6 +6,7 @@
 void uart_comm_init(WiFiApp* app);
 void uart_comm_deinit(WiFiApp* app);
 void uart_send_command(WiFiApp* app, const char* command);
+void uart_send_select_networks(WiFiApp* app);
 const char* uart_read_line(WiFiApp* app, uint32_t timeout_ms);
 void uart_clear_buffer(WiFiApp* app);
 bool uart_check_board_connection(WiFiApp* app);

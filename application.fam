@@ -28,6 +28,7 @@ App(
         "src/screen_sae_overflow.c",
         "src/screen_sniff_karma.c",
         "src/screen_sniffer.c",
+        "src/sniffer_clients_model.c",
         "src/screen_sniffer_dog.c",
         "src/screen_wardrive.c",
         "src/screen_wifi_scan.c",

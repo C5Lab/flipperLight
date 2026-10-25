@@ -3,11 +3,13 @@
 #include <furi_hal_serial_control.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <furi.h>
 
 #define TAG "UART"
 #define UART_BUFFER_SIZE 4096
 #define UART_LINE_TIMEOUT_MS 5000  // 5 seconds per line - overall scan has its own timeout
+#define UART_LINE_MAX 1024
 
 static void uart_serial_irq(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, void* context) {
     WiFiApp* app = (WiFiApp*)context;
@@ -102,6 +104,7 @@ static bool uart_read_line_internal(WiFiApp* app, FuriString* line) {
     furi_string_reset(line);
     uint32_t timeout = furi_get_tick() + UART_LINE_TIMEOUT_MS;
     bool has_content = false;
+    bool discard = false;
     
     while(furi_get_tick() < timeout) {
         uint8_t byte;
@@ -109,11 +112,21 @@ static bool uart_read_line_internal(WiFiApp* app, FuriString* line) {
         
         if(received == 1) {
             if(byte == '\n' || byte == '\r') {
-                if(has_content) {
+                if(has_content && !discard) {
                     return true;
                 }
+                furi_string_reset(line);
+                has_content = false;
+                discard = false;
                 continue;
             } else if(byte >= 32 && byte < 127) {
+                if(discard) continue;
+                if(furi_string_size(line) + 1 >= UART_LINE_MAX) {
+                    furi_string_reset(line);
+                    has_content = false;
+                    discard = true;
+                    continue;
+                }
                 furi_string_push_back(line, (char)byte);
                 has_content = true;
                 timeout = furi_get_tick() + UART_LINE_TIMEOUT_MS;
@@ -264,7 +277,7 @@ void uart_comm_init(WiFiApp* app) {
     app->board_connected = false;
     
     furi_stream_buffer_reset(app->uart_rx_buffer);
-    furi_hal_serial_async_rx_start(app->serial, uart_serial_irq, app, false);
+    furi_hal_serial_async_rx_start(app->serial, uart_serial_irq, app, true);
     
     // Start UART worker thread for scanning
     app->uart_thread = furi_thread_alloc();
@@ -313,20 +326,56 @@ void uart_send_command(WiFiApp* app, const char* command) {
     furi_hal_serial_tx_wait_complete(app->serial);
 }
 
+void uart_send_select_networks(WiFiApp* app) {
+    if(!app || app->selected_count == 0) return;
+
+    char cmd[640];
+    int wrote = snprintf(cmd, sizeof(cmd), "select_networks");
+    if(wrote < 0) return;
+    size_t pos = (size_t)wrote;
+
+    for(uint32_t i = 0; i < app->selected_count; i++) {
+        if(pos >= sizeof(cmd)) return;
+        wrote = snprintf(
+            cmd + pos,
+            sizeof(cmd) - pos,
+            " %lu",
+            (unsigned long)app->selected_networks[i]);
+        if(wrote < 0 || (size_t)wrote >= sizeof(cmd) - pos) return;
+        pos += (size_t)wrote;
+    }
+
+    uart_send_command(app, cmd);
+}
+
 const char* uart_read_line(WiFiApp* app, uint32_t timeout_ms) {
     uint32_t start = furi_get_tick();
     furi_string_reset(app->uart_line_buffer);
+    bool discard = false;
     
     while((furi_get_tick() - start) < timeout_ms) {
         uint8_t data = 0;
         if(furi_stream_buffer_receive(app->uart_rx_buffer, &data, 1, 10) == 1) {
             if(data == '\n') {
-                if(furi_string_size(app->uart_line_buffer) > 0 && 
+                if(furi_string_size(app->uart_line_buffer) > 0 &&
                    furi_string_get_char(app->uart_line_buffer, furi_string_size(app->uart_line_buffer) - 1) == '\r') {
                     furi_string_left(app->uart_line_buffer, furi_string_size(app->uart_line_buffer) - 1);
                 }
-                return furi_string_get_cstr(app->uart_line_buffer);
+                if(discard) {
+                    furi_string_reset(app->uart_line_buffer);
+                    discard = false;
+                    continue;
+                }
+                if(furi_string_size(app->uart_line_buffer) > 0) {
+                    return furi_string_get_cstr(app->uart_line_buffer);
+                }
             } else if(data != '\r') {
+                if(discard) continue;
+                if(furi_string_size(app->uart_line_buffer) + 1 >= UART_LINE_MAX) {
+                    furi_string_reset(app->uart_line_buffer);
+                    discard = true;
+                    continue;
+                }
                 furi_string_push_back(app->uart_line_buffer, data);
             }
         }

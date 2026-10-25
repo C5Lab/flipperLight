@@ -62,7 +62,7 @@ View* screen_karma_probe_create(WiFiApp* app, const char* probe_ssid, void** out
 // Deauth Client - deauthenticates a single client from sniffer results
 View* screen_deauth_client_create(
     WiFiApp* app, uint8_t net_index, const char* mac,
-    const char* ssid, uint8_t channel, void** out_data);
+    const char* ssid, uint8_t channel, bool station_started, void** out_data);
 
 // ARP from Credentials - ARP poisoning with known SSID + password
 View* screen_arp_from_creds_create(
