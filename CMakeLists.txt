@@ -3,6 +3,7 @@ project(c5lab C)
 
 add_library(c5lab
     src/app.c
+    src/scan_csv.c
     src/uart_comm.c
     src/screen.c
     src/screen_main_menu.c

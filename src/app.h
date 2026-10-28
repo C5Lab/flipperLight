@@ -15,16 +15,20 @@
 #include <furi/core/stream_buffer.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "scan_csv.h"
 
 typedef struct WiFiApp WiFiApp;
 
-// WiFi network info from scan
+// WiFi network info from scan_networks / show_scan_results.
+// ssid and vendor are unescaped (a CSV "" is one ").
 typedef struct {
-    char ssid[33];
-    char bssid[18];
+    char ssid[SCAN_CSV_SSID_MAX];
+    char bssid[SCAN_CSV_BSSID_MAX];
     int8_t rssi;
     int channel;
-    char auth[32];
+    char auth[SCAN_CSV_AUTH_MAX];
+    char vendor[SCAN_CSV_VENDOR_MAX];
+    char band[SCAN_CSV_BAND_MAX];
 } WiFiNetwork;
 
 #define MAX_SCAN_RESULTS 64

@@ -24,73 +24,27 @@ static void uart_serial_irq(FuriHalSerialHandle* handle, FuriHalSerialRxEvent ev
 
 //=============================================================================
 // CSV Parsing for network scan results
+// Format: "index","ssid","vendor","BSSID","channel","auth","rssi","band"
+// Quotes inside a field are RFC 4180 doubled quotes. See scan_csv.c.
 //=============================================================================
 
-bool csv_next_quoted_field(const char** p, char* out, size_t out_size) {
-    if(!p || !*p || !out || out_size == 0) return false;
-
-    const char* s = *p;
-    while(*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
-    if(*s != '"') return false;
-    s++; // skip opening quote
-
-    size_t i = 0;
-    while(*s && *s != '"') {
-        if(i + 1 < out_size) {
-            out[i++] = *s;
-        }
-        s++;
-    }
-    if(*s != '"') return false;
-    out[i] = '\0';
-    s++; // skip closing quote
-
-    if(*s == ',') s++; // skip comma if present
-
-    *p = s;
-    return true;
-}
-
-static bool parse_network_csv(const char* line, WiFiNetwork* net) {
+static bool parse_network_line(const char* line, WiFiNetwork* net) {
     if(!line || !net) return false;
 
-    // Format: "index","ssid","vendor","AA:BB:CC:DD:EE:FF","channel","auth","rssi","band"
-    char index_str[8] = {0};
-    char ssid[33] = {0};
-    char vendor[33] = {0};
-    char bssid[18] = {0};
-    char channel_str[8] = {0};
-    char auth[32] = {0};
-    char rssi_str[8] = {0};
-    char band[8] = {0};
+    ScanCsvNetwork parsed;
+    if(!parse_network_csv(line, &parsed)) return false;
 
-    const char* p = line;
-    bool ok = true;
-    ok &= csv_next_quoted_field(&p, index_str, sizeof(index_str));
-    ok &= csv_next_quoted_field(&p, ssid, sizeof(ssid));
-    ok &= csv_next_quoted_field(&p, vendor, sizeof(vendor));
-    ok &= csv_next_quoted_field(&p, bssid, sizeof(bssid));
-    ok &= csv_next_quoted_field(&p, channel_str, sizeof(channel_str));
-    ok &= csv_next_quoted_field(&p, auth, sizeof(auth));
-    ok &= csv_next_quoted_field(&p, rssi_str, sizeof(rssi_str));
-    ok &= csv_next_quoted_field(&p, band, sizeof(band));
-
-    if(!ok) return false;
-
-    int channel = 0;
-    int rssi = 0;
-    if(channel_str[0] != '\0') channel = atoi(channel_str);
-    if(rssi_str[0] != '\0') rssi = atoi(rssi_str);
-
-    strncpy(net->ssid, ssid, sizeof(net->ssid) - 1);
-    net->ssid[sizeof(net->ssid) - 1] = '\0';
-    strncpy(net->bssid, bssid, sizeof(net->bssid) - 1);
-    net->bssid[sizeof(net->bssid) - 1] = '\0';
-    strncpy(net->auth, auth, sizeof(net->auth) - 1);
-    net->auth[sizeof(net->auth) - 1] = '\0';
-    net->channel = channel;
+    memset(net, 0, sizeof(*net));
+    memcpy(net->ssid, parsed.ssid, sizeof(net->ssid));
+    memcpy(net->vendor, parsed.vendor, sizeof(net->vendor));
+    memcpy(net->bssid, parsed.bssid, sizeof(net->bssid));
+    memcpy(net->auth, parsed.auth, sizeof(net->auth));
+    memcpy(net->band, parsed.band, sizeof(net->band));
+    net->channel = parsed.channel;
+    int rssi = parsed.rssi;
+    if(rssi > 127) rssi = 127;
+    if(rssi < -128) rssi = -128;
     net->rssi = (int8_t)rssi;
-
     return true;
 }
 
@@ -178,7 +132,7 @@ static int32_t uart_worker(void* context) {
                 } else if(line_str[0] == '"') {
                     // Parse network CSV line
                     if(app->scan_results && app->scan_result_count < app->scan_result_capacity) {
-                        if(parse_network_csv(line_str, &app->scan_results[app->scan_result_count])) {
+                        if(parse_network_line(line_str, &app->scan_results[app->scan_result_count])) {
                             app->scan_result_count++;
                         }
                     }

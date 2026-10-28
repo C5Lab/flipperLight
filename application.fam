@@ -49,6 +49,7 @@ App(
         "src/screen_nmap.c",
         "src/screen_beacon_spam.c",
         "src/screen_wardrive_upload.c",
+        "src/scan_csv.c",
         "src/uart_comm.c",
     ],
 )
