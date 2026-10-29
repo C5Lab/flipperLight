@@ -12,8 +12,5 @@ void uart_clear_buffer(WiFiApp* app);
 bool uart_check_board_connection(WiFiApp* app);
 bool uart_check_sd_card(WiFiApp* app);
 
-// CSV parsing
-bool csv_next_quoted_field(const char** p, char* out, size_t out_size);
-
 // Scanning
 void uart_start_scan(WiFiApp* app);

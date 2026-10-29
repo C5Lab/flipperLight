@@ -52,23 +52,27 @@ static void network_info_draw(Canvas* canvas, void* model) {
     screen_draw_title(canvas, "Network Info");
     
     canvas_set_font(canvas, FontSecondary);
-    
-    // SSID
-    char line[48];
-    snprintf(line, sizeof(line), "SSID: %s", net->ssid[0] ? net->ssid : "(hidden)");
+
+    // No "SSID:" prefix: a 21-character name fills one FontSecondary row.
+    char line[64];
+    snprintf(line, sizeof(line), "%s", net->ssid[0] ? net->ssid : "(hidden)");
     canvas_draw_str(canvas, 2, 20, line);
-    
-    // BSSID
-    snprintf(line, sizeof(line), "BSSID: %s", net->bssid);
+
+    snprintf(line, sizeof(line), "Vendor: %s", net->vendor[0] ? net->vendor : "-");
     canvas_draw_str(canvas, 2, 30, line);
-    
-    // Channel and RSSI
-    snprintf(line, sizeof(line), "Ch: %d  Signal: %d dBm", net->channel, net->rssi);
+
+    snprintf(line, sizeof(line), "BSSID: %s", net->bssid);
     canvas_draw_str(canvas, 2, 40, line);
-    
-    // Auth/Encryption
-    snprintf(line, sizeof(line), "Auth: %s", net->auth[0] ? net->auth : "Open");
+
+    if(net->band[0]) {
+        snprintf(line, sizeof(line), "Ch: %d %s  %d dBm", net->channel, net->band, (int)net->rssi);
+    } else {
+        snprintf(line, sizeof(line), "Ch: %d  Signal: %d dBm", net->channel, (int)net->rssi);
+    }
     canvas_draw_str(canvas, 2, 50, line);
+
+    snprintf(line, sizeof(line), "Auth: %s", net->auth[0] ? net->auth : "Open");
+    canvas_draw_str(canvas, 2, 60, line);
 }
 
 static bool network_info_input(InputEvent* event, void* context) {
@@ -171,12 +175,12 @@ static void wifi_scan_draw(Canvas* canvas, void* model) {
             }
             
             bool selected = is_network_selected(app, idx + 1);
-            char line[42];
+            char line[64];
             if(net->ssid[0]) {
-                snprintf(line, sizeof(line), "%c %.18s [%d]",
+                snprintf(line, sizeof(line), "%c %s [%d]",
                          selected ? '*' : ' ',
                          net->ssid,
-                         net->rssi);
+                         (int)net->rssi);
             } else {
                 snprintf(line, sizeof(line), "%c (%.17s)",
                          selected ? '*' : ' ',
